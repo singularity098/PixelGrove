@@ -95,7 +95,8 @@ pub fn exif(path: &Path) -> Option<Vec<u8>> {
             }
             _ => {}
         }
-        pos = b.body + len;
+        // A corrupt size could wrap around and send us back to the start forever.
+        pos = b.body.checked_add(len)?;
     }
     None
 }
@@ -230,7 +231,10 @@ pub fn metadata_boxes(data: &[u8]) -> Result<Vec<MetadataBox>> {
     let mut found = Vec::new();
     let mut pos = 12;
     while let Some(b) = box_at(&mut reader, pos)? {
-        let end = b.len.map_or(data.len() as u64, |len| b.body + len);
+        let end = match b.len {
+            None => data.len() as u64,
+            Some(len) => b.body.checked_add(len).context("bad JPEG XL box size")?,
+        };
         if end > data.len() as u64 {
             bail!("truncated JPEG XL box");
         }
@@ -274,6 +278,34 @@ mod tests {
         let path = dir.join(name);
         std::fs::write(&path, bytes).unwrap();
         path
+    }
+
+    /// A container whose second box claims a 64-bit size that overflows the file
+    /// offset (found by fuzzing): an error, not a panic or an endless loop.
+    #[test]
+    fn huge_box_size_is_rejected() {
+        let mut data = CONTAINER_SIGNATURE.to_vec();
+        data.extend_from_slice(&[0, 0, 0, 1]);
+        data.extend_from_slice(b"Exif");
+        data.extend_from_slice(&(u64::MAX - 8).to_be_bytes());
+        data.extend_from_slice(&[0; 8]);
+        assert!(metadata_boxes(&data).is_err());
+        let dir = tempfile::tempdir().unwrap();
+        let path = write(dir.path(), "a.jxl", &data);
+        assert!(exif(&path).is_none());
+    }
+
+    /// A crafted file on which the JPEG XL library panics while rebuilding the JPEG
+    /// (found by fuzzing): the preview fails, the server carries on.
+    #[test]
+    fn decoder_panic_is_contained() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write(
+            dir.path(),
+            "a.jxl",
+            include_bytes!("../tests/fixtures/decoder-panic.jxl"),
+        );
+        assert!(crate::preview::render(&path, crate::preview::Variant::Thumb, 1).is_err());
     }
 
     /// A 64×48 JPEG with EXIF (camera, date, GPS, orientation 6) transcoded losslessly.

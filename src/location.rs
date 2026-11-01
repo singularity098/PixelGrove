@@ -35,6 +35,11 @@ const MAX_IFD_ENTRIES: usize = 1000;
 
 /// The patches that remove location data from a file, sorted by offset.
 pub fn find(path: &Path, kind: &str) -> Result<Vec<Patch>> {
+    crate::guard::contain("location finder", path, || find_unguarded(path, kind))
+        .unwrap_or_else(|| anyhow::bail!("checking {} for location data failed", path.display()))
+}
+
+fn find_unguarded(path: &Path, kind: &str) -> Result<Vec<Patch>> {
     let mut file = File::open(path)?;
     let mut patches = if kind == "video" {
         video_patches(&mut file)?
@@ -357,7 +362,8 @@ fn video_patches(file: &mut File) -> Result<Vec<Patch>> {
             1 if n >= 16 => (u64::from_be_bytes(header[8..16].try_into().unwrap()), 16),
             s => (u64::from(s), 8),
         };
-        if size < header_len || pos + size > file_len {
+        // `pos + 8 <= file_len`, so this can't underflow; `pos + size` could overflow.
+        if size < header_len || size > file_len - pos {
             break;
         }
         if &header[4..8] == b"moov" {
@@ -387,7 +393,7 @@ fn children(buf: &[u8], start: usize, end: usize) -> Vec<(usize, usize, usize, [
             ),
             s => (s as usize, 8),
         };
-        if size < header || pos + size > end {
+        if size < header || size > end - pos {
             break;
         }
         out.push((pos, header, size, buf[pos + 4..pos + 8].try_into().unwrap()));
@@ -492,6 +498,26 @@ mod tests {
 
     fn patched(data: &[u8], patches: &[Patch]) -> Vec<u8> {
         apply(patches, 0, Bytes::copy_from_slice(data)).to_vec()
+    }
+
+    /// Atoms whose 64-bit sizes overflow the offset (found by fuzzing) end the walk
+    /// instead of wrapping around: no panic, no endless loop.
+    #[test]
+    fn huge_atom_sizes_are_rejected() {
+        let mut moov = Vec::new();
+        moov.extend_from_slice(&[0, 0, 0, 1]);
+        moov.extend_from_slice(b"udta");
+        moov.extend_from_slice(&u64::MAX.to_be_bytes());
+        let mut video = (8 + moov.len() as u32).to_be_bytes().to_vec();
+        video.extend_from_slice(b"moov");
+        video.extend_from_slice(&moov);
+        video.extend_from_slice(&[0, 0, 0, 1]);
+        video.extend_from_slice(b"mdat");
+        video.extend_from_slice(&(u64::MAX - 7).to_be_bytes());
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.mp4");
+        std::fs::write(&path, &video).unwrap();
+        assert_eq!(find(&path, "video").unwrap(), Vec::new());
     }
 
     #[test]

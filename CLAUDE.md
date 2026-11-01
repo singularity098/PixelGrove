@@ -28,7 +28,10 @@ milestones). README is user-facing documentation.
 
 ```
 src/                 Rust server
-  main.rs            startup: config, DB, indexer, previews, FFmpeg detection, server
+  main.rs            calls lib::main (the crate is a library so fuzz/ can reach it)
+  lib.rs             startup: config, DB, indexer, previews, FFmpeg detection, server
+  guard.rs           catch_unwind around third-party decoders (release unwinds)
+  fuzz.rs            fuzz-target entry points, compiled only with --cfg fuzzing
   config.rs          config file + PIXELGROVE_* env vars (table in README)
   db.rs              SQLite pool, schema, migrations (PRAGMA user_version; append only)
   scanner.rs         filesystem walk → folders/media tables (two phases, chunked)
@@ -43,7 +46,8 @@ src/                 Rust server
   api/               one module per area (browse, media, timeline, explore, search,
                      files, favorites, hidden, shares, public, trash, users, settings, auth)
   testdata.rs        tiny generated JPEG/PNG/EXIF fixtures for tests
-tests/fixtures/      binary fixtures (JPEG XL)
+tests/fixtures/      binary fixtures (JPEG XL; decoder-panic.jxl came from fuzzing)
+fuzz/                cargo-fuzz targets (own workspace, nightly), make_seeds.py, README
 web/                 Svelte 5 (runes) + Vite + TypeScript UI
   src/pages/         one component per route; src/components/ shared UI
   src/lib/           router (history API + scroll restoration), api client, lists
@@ -64,6 +68,11 @@ cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings && cargo
 cd web && npm ci && npm run check && npm run build   # check = svelte-check --fail-on-warnings
 ```
 
+- Fuzzing (`fuzz/README.md`): `python3 fuzz/make_seeds.py`, then
+  `cd fuzz && cargo +nightly fuzz run <target> -- -max_total_time=600 -rss_limit_mb=2048`
+  (`http` also needs `-detect_leaks=0`).
+  The first build takes ~4 minutes. Turn each crash into a `#[test]` next to the code.
+  The Fuzz workflow runs every target for 2 minutes on pushes touching Rust code.
 - The binary embeds `web/dist`, so **rebuild the web UI before `cargo build`** when
   testing the UI against a real server.
 - `cargo build --release` takes 3–4 minutes here; run it in the background.
@@ -149,5 +158,12 @@ cd web && npm ci && npm run check && npm run build   # check = svelte-check --fa
   starts late (or after a seek, where copied video starts at the earlier keyframe) plays
   early. The remux uses `delay_moov` (edit lists) and `-noaccurate_seek`. Headless
   Chromium has no AAC or H.264 decoder: check sync with VP9 + Opus in MP4.
+- Release builds unwind on panic (not `abort`): fuzzing found a crafted JPEG XL that
+  panics inside jxl-oxide's JPEG rebuild, and with `abort` that killed the server (and
+  scans at boot would kill it again). New calls into third-party decoders or parsers go
+  through `guard::contain`. Size-field arithmetic in our own box/atom walkers must be
+  checked (`checked_add`, or compare against `end - pos`): a 64-bit size can wrap.
+- r2d2's idle/lifetime reaper keeps the pool's threads alive after the pool is
+  dropped; `Db` turns it off (it leaked 3 threads per test app).
 - Shell safety: don't `rm -rf` variables or top-level paths in commands; the session's
   safety check blocks them (and blocks the whole command, including edits in it).

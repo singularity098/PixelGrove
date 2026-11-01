@@ -188,6 +188,10 @@ What it does for you:
   reachable, no server paths or GPS in what visitors see, and location stripped from
   shared files as described above. (Not covered: GPS kept in camera maker notes, or in
   telemetry tracks such as GoPro's.)
+- **Untrusted files:** the parsers that read your library (EXIF, MP4, JPEG XL boxes,
+  location stripping, image decoders) and the HTTP API are fuzz-tested (`fuzz/`). A
+  file that still makes a third-party decoder crash only loses its preview or metadata;
+  the server carries on.
 - **Container:** a single static binary on an empty `scratch` image, run as your user;
   mount media `:ro` if you don't need Trash.
 
@@ -243,7 +247,10 @@ cd web && npm install && npm run dev
 ```
 
 Checks run in CI: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
-`cargo test`, and `npm run check && npm run build` in `web/`.
+`cargo test`, and `npm run check && npm run build` in `web/`. A separate workflow
+fuzzes every target for two minutes after pushes that touch the Rust code, and weekly;
+see [`fuzz/README.md`](fuzz/README.md) for running the fuzzers locally (nightly Rust and
+`cargo-fuzz`).
 
 To benchmark the indexer, generate a synthetic library and point a release build at it:
 

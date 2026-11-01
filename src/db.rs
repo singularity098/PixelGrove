@@ -197,8 +197,13 @@ impl Db {
     }
 
     fn from_manager(manager: SqliteConnectionManager, size: u32) -> Result<Self> {
+        // No idle/lifetime reaping: recycling local SQLite connections gains nothing,
+        // and r2d2's reaper job keeps the pool's three threads alive even after the
+        // pool is dropped (every test app and fuzz run leaked them).
         let pool = Pool::builder()
             .max_size(size)
+            .idle_timeout(None)
+            .max_lifetime(None)
             .connection_timeout(Duration::from_secs(30))
             .build(manager)?;
         migrate(&mut *pool.get()?)?;

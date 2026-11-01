@@ -2,6 +2,9 @@
 //! concurrency and holds on to freed memory, so mimalloc is used instead and tuned to
 //! return memory to the OS promptly: a large scan shouldn't leave memory resident.
 
+// Fuzzing uses the system allocator, which libFuzzer and the sanitizers hook to
+// catch leaks, overflows and runaway allocations.
+#[cfg(not(fuzzing))]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 

@@ -60,9 +60,14 @@ tempfile = "3.27.0"
 lto = true
 codegen-units = 1
 strip = true
-panic = "abort"
+# Unwinding (the default) rather than aborting: third-party decoders can panic on bad
+# files, and `guard::contain` turns that into a skipped file instead of a dead server.
 
 # Password hashing is deliberately expensive; unoptimised it makes tests and dev
 # logins crawl.
 [profile.dev.package.argon2]
 opt-level = 3
+
+# `cargo fuzz` builds with `--cfg fuzzing` (see fuzz/).
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(fuzzing)"] }

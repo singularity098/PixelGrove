@@ -1,0 +1,60 @@
+[package]
+name = "pixelgrove-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+pixelgrove = { path = ".." }
+
+# Not part of the main workspace: it needs nightly and `cargo fuzz`.
+[workspace]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "location"
+path = "fuzz_targets/location.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "location_apply"
+path = "fuzz_targets/location_apply.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "jxl"
+path = "fuzz_targets/jxl.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "metadata"
+path = "fuzz_targets/metadata.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "preview"
+path = "fuzz_targets/preview.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "http"
+path = "fuzz_targets/http.rs"
+test = false
+doc = false
+bench = false

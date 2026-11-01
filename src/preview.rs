@@ -174,7 +174,18 @@ impl Previews {
 }
 
 /// Renders a preview as JPEG, or `None` if the original should be served instead.
-pub fn render(path: &Path, variant: Variant, mut orientation: u16) -> Result<Option<Vec<u8>>> {
+pub fn render(path: &Path, variant: Variant, orientation: u16) -> Result<Option<Vec<u8>>> {
+    crate::guard::contain("preview decoder", path, || {
+        render_unguarded(path, variant, orientation)
+    })
+    .unwrap_or_else(|| bail!("decoding {} failed", path.display()))
+}
+
+fn render_unguarded(
+    path: &Path,
+    variant: Variant,
+    mut orientation: u16,
+) -> Result<Option<Vec<u8>>> {
     let ext = path
         .extension()
         .and_then(|e| e.to_str())

@@ -62,6 +62,17 @@ pub fn mtime_secs(meta: &FsMetadata) -> i64 {
 /// Reads whatever metadata the file offers. Never fails: unreadable or
 /// metadata-less files simply yield fewer fields.
 pub fn read(parser: &mut MediaParser, path: &Path, kind: MediaKind) -> MediaInfo {
+    crate::guard::contain("metadata reader", path, || {
+        read_unguarded(parser, path, kind)
+    })
+    .unwrap_or_else(|| {
+        // Its buffers may be half-way through the bad file.
+        *parser = MediaParser::new();
+        MediaInfo::default()
+    })
+}
+
+fn read_unguarded(parser: &mut MediaParser, path: &Path, kind: MediaKind) -> MediaInfo {
     let mut info = MediaInfo::default();
     match kind {
         MediaKind::Image if crate::jxl::is_jxl(path) => read_jxl(parser, path, &mut info),
