@@ -97,9 +97,12 @@ cd web && npm ci && npm run check && npm run build   # check = svelte-check --fa
 
 ## Workflow
 
-- The owner wants work pushed straight to `main` when it's ready:
-  `git push origin HEAD:main`, and also push the working branch
-  (`claude/pixelgrove-requirements-review-3y8rqi`). Don't open PRs unless asked.
+- **Commit and push directly to `main`.** Don't create feature branches or open pull requests
+  unless the owner asks for one.
+- Claude Code setups (the web version especially) may create their own working branch for the
+  session. Even then, don't use that branch: commit on `main` and push `main`
+  (`git push origin HEAD:main`). Don't push the session branch.
+- This is a solo project: branches and PRs add very little here and create unwanted overhead.
 - After pushing, check that both GitHub workflows (CI and Docker) go green; the Docker
   job takes ~10 minutes (it cross-compiles the binary and FFmpeg for amd64 and arm64).
   Pushes in quick succession cancel the older runs.
