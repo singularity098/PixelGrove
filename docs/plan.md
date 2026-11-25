@@ -19,11 +19,17 @@ decisions made while reviewing them and the plan for building v1.
 | CI | GitHub Actions: `cargo fmt`, `clippy`, tests, frontend lint/build on every PR |
 | License | MIT (proposed — easy to change) |
 
-### Previews (no thumbnails on disk)
+### Previews (no thumbnails on disk, unless asked for)
 1. Use the **embedded EXIF preview** when the file has one (most camera/phone JPEGs) — near-free.
+   As built: for thumbnails, when the IFD1 preview is at least the thumbnail size and the
+   photo's shape (≈4 ms against ≈100 ms for a DCT-scaled decode of a noisy 12 MP JPEG).
 2. Otherwise **resize on the fly**, held in a size-capped **in-memory LRU cache** (default 256 MB, configurable, lost on restart).
 3. Strong HTTP caching headers (`ETag` from path+size+mtime) so browsers keep previews.
-4. Nothing preview-related is ever written to `/config` or the media volumes.
+4. Nothing preview-related is written to `/config` or the media volumes, unless the
+   optional thumbnail cache is turned on (`PIXELGROVE_THUMBNAIL_CACHE`, off by default;
+   always on in the Android app): JPEGs named by a hash of path, size and mtime, read
+   memory-mapped (≈3 µs per hit), capped by size (least recently used go first), and made
+   for the whole library in the background (rayon, half the cores).
 
 As built (M3): JPEGs are decoded at 1/2–1/8 scale straight from DCT data, which makes a
 thumbnail (shorter edge 360 px) of a 12 MP photo take ~20–30 ms uncached; the viewer
@@ -85,7 +91,9 @@ only where the browser shows it). Browse API calls take 1–4 ms at 100k files.
 ### Changing files
 - **Trash:** deleting moves the file to `<watch root>/.pixelgrove-trash/<relative path>`;
   it is purged automatically after 30 days. Trash is disabled automatically for read-only mounts.
-- No other edits in v1 (no rotate/rename/move/upload).
+- **Copy / move** to another folder of the library (editors and admins): keeps the mtime,
+  picks a free name, and a move carries favorites, hidden marks and share links over to the
+  new entry. No other edits (no rotate/rename/upload).
 - **Favorites** are per-user and stored in the database only (never written into files).
 
 ### Users & sharing
@@ -229,4 +237,5 @@ A synthetic library can be generated with `scripts/gen-bench-library.py`.
 | M6 ✅ | **Sharing** | Share links for files/folders, public share pages, Sharing management view |
 | M7 ✅ | **Map & Explore** | Offline reverse geocoding, map with clustering, Explore facets |
 | M7+ ✅ | **Installable app (PWA)** | Manifest, icons (incl. maskable / Apple), service worker caching the app shell (never photos or API data) |
+| M9 ✅ | **Android (PixelG)** | The engine embedded through JNI (`src/embed.rs`, `android/core`), native Compose UI with every library view, camera button, Edit, share sheet, copy/move, HEIC, thumbnail cache on disk, inotify + MediaStore generation sync |
 | M8 ✅ | **Slideshow & polish** | Slideshow, mobile/desktop polish, 100k-file benchmark pass, docs (README, docker-compose example) |

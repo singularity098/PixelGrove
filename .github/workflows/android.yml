@@ -1,0 +1,56 @@
+name: Android
+
+on:
+  push:
+    branches: [main]
+    paths: ["android/**", "src/**", "data/**", "Cargo.toml", "Cargo.lock", ".github/workflows/android.yml"]
+  pull_request:
+    paths: ["android/**", "src/**", "data/**", "Cargo.toml", "Cargo.lock", ".github/workflows/android.yml"]
+  workflow_dispatch:
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  NDK_VERSION: 28.2.13676358
+
+jobs:
+  apk:
+    name: PixelG APK
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: android/core
+      - name: Install the NDK and cargo-ndk
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" > /dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+          cargo install cargo-ndk --locked
+      - uses: gradle/actions/setup-gradle@v5
+      - name: Unit tests (the engine through JNI, and screenshots)
+        run: ./gradlew testDebugUnitTest --console=plain
+      - name: Release APK
+        run: ./gradlew assembleRelease --console=plain
+      - uses: actions/upload-artifact@v5
+        with:
+          name: pixelg-apk
+          path: android/app/build/outputs/apk/release/*.apk
+      - uses: actions/upload-artifact@v5
+        if: always()
+        with:
+          name: pixelg-screenshots
+          path: android/app/build/outputs/roborazzi/*.png

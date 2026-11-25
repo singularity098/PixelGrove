@@ -1,5 +1,6 @@
 //! PixelGrove: the whole server as a library, so fuzz targets (`fuzz/`) can reach the
-//! parsers. The `pixelgrove` binary just calls [`main`].
+//! parsers and the PixelG Android app (`android/`) can run it in-process ([`embed`]).
+//! The `pixelgrove` binary just calls [`main`].
 
 mod alloc;
 mod api;
@@ -7,6 +8,7 @@ mod assets;
 mod auth;
 mod config;
 mod db;
+pub mod embed;
 #[cfg(fuzzing)]
 pub mod fuzz;
 mod guard;
@@ -21,6 +23,7 @@ mod server;
 mod shares;
 #[cfg(test)]
 mod testdata;
+mod thumbcache;
 mod trash;
 mod video;
 
@@ -90,9 +93,29 @@ async fn serve() -> Result<()> {
     spawn_session_cleanup(db.clone());
 
     let ffmpeg = video::Ffmpeg::detect(&config.ffmpeg).await;
+    let disk_cache = match &config.thumbnail_cache {
+        Some(dir) => {
+            match thumbcache::DiskCache::open(dir, config.thumbnail_cache_mb * 1024 * 1024) {
+                Ok(cache) => {
+                    tracing::info!(dir = %dir.display(), "thumbnail cache on disk is on");
+                    Some(cache)
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        "thumbnail cache unavailable, keeping previews in memory: {err:#}"
+                    );
+                    None
+                }
+            }
+        }
+        None => None,
+    };
     let previews = Arc::new(
-        preview::Previews::new(config.preview_cache_mb as usize * 1024 * 1024).with_ffmpeg(ffmpeg),
+        preview::Previews::new(config.preview_cache_mb as usize * 1024 * 1024)
+            .with_ffmpeg(ffmpeg)
+            .with_disk_cache(disk_cache),
     );
+    thumbcache::spawn_warmup(db.clone(), previews.clone());
     if previews.has_ffmpeg() && config.video_preload > 0 {
         video::spawn_preload(
             db.clone(),

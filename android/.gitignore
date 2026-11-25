@@ -1,0 +1,11 @@
+.gradle/
+build/
+local.properties
+*.iml
+.idea/
+.kotlin/
+captures/
+core/target/
+app/src/main/jniLibs/
+*.keystore
+*.jks

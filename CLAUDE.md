@@ -8,21 +8,27 @@ this file in the same commit.
 
 A self-hosted photo and video library: a single Rust binary (axum + SQLite) that serves a
 Svelte 5 web UI embedded at build time, shipped as a `scratch` Docker image with a
-trimmed static FFmpeg. `docs/requirements.md` is the owner's original brief;
+trimmed static FFmpeg. **PixelG** (`android/`) is the Android app: the same crate run
+in-process through JNI (`src/embed.rs`) under a native Kotlin/Compose UI. `docs/requirements.md` is the owner's original brief;
 `docs/plan.md` is the design (decisions, architecture, data model, performance targets,
 milestones). README is user-facing documentation.
 
 ### Rules from the owner (don't break these)
 
-- **Nothing written to disk for previews.** No thumbnail files, no disk cache, anywhere.
-  Previews (photos, JPEG XL, video frames) are made on demand and kept in an in-memory LRU
-  (`src/preview.rs`). The database is the only thing in `/config`.
+- **Nothing written to disk for previews by default.** Previews are made on demand and
+  kept in an in-memory LRU (`src/preview.rs`). The only exception is the opt-in thumbnail
+  cache (`src/thumbcache.rs`, `PIXELGROVE_THUMBNAIL_CACHE`, **off by default** on the
+  server, always on in PixelG). Never next to the photos. Otherwise the database is the
+  only thing in `/config`.
 - **View-only accounts have no changeable options** on the server (no favorites,
   sharing, trash, hiding). Per-device display preferences kept in `localStorage`
   (theme, phone column counts, folder sort) are fine for everyone.
 - Ultra-light and fast: measure before/after for anything on a hot path (scan, browse,
   previews) and quote the numbers in the commit message.
-- Your files on disk are only changed by explicit user actions (trash/restore).
+- Your files on disk are only changed by explicit user actions (trash/restore,
+  copy/move).
+- PixelG should keep feature parity with the web UI (minus accounts and share links,
+  which don't apply on a phone). New API features usually need both UIs.
 
 ## Layout
 
@@ -43,8 +49,11 @@ src/                 Rust server
   location.rs        same-length byte patches that strip GPS from shared originals
   places.rs          offline reverse geocoding (data/cities.tsv)
   auth.rs, shares.rs, trash.rs, server.rs (security headers, routing), alloc.rs
-  api/               one module per area (browse, media, timeline, explore, search,
-                     files, favorites, hidden, shares, public, trash, users, settings, auth)
+  api/               one module per area (browse, media, organize (copy/move), timeline,
+                     explore, search, files, favorites, hidden, shares, public, trash,
+                     users, settings, auth)
+  thumbcache.rs      optional thumbnail cache on disk (mmap reads, LRU cap, rayon warm-up)
+  embed.rs           the engine in-process for PixelG: JSON API without HTTP, thumbnails
   testdata.rs        tiny generated JPEG/PNG/EXIF fixtures for tests
 tests/fixtures/      binary fixtures (JPEG XL; decoder-panic.jxl came from fuzzing)
 fuzz/                cargo-fuzz targets (own workspace, nightly), make_seeds.py, README
@@ -56,6 +65,8 @@ web/                 Svelte 5 (runes) + Vite + TypeScript UI
 data/cities.tsv      geocoding data, embedded
 docs/                requirements.md, plan.md, screenshots/, logo-{dark,light}.svg (README)
 scripts/screenshots/ demo library + Playwright script for README screenshots
+android/             PixelG: core/ (Rust JNI crate, own workspace), app/ (Kotlin, Compose),
+                     README.md; see android/README.md for the layout
 Dockerfile           web build → cross-compiled static musl binary → static FFmpeg → scratch
 ```
 
@@ -68,6 +79,12 @@ cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings && cargo
 cd web && npm ci && npm run check && npm run build   # check = svelte-check --fail-on-warnings
 ```
 
+- Android (`android/README.md`): `cd android && ./gradlew testDebugUnitTest assembleRelease`
+  (`-Ppixelg.abis=arm64-v8a` builds the engine for phones only; `-Ppixelg.skipRust`
+  reuses it). Needs `sdk.dir` in `android/local.properties` and `ANDROID_NDK_HOME`. The unit
+  tests run the engine built for the host through JNI and render screenshots with
+  Robolectric into `app/build/outputs/roborazzi/` (look at them after UI changes;
+  `-Ppixelg.demo=<dir with DCIM>` for nicer pictures). CI: `.github/workflows/android.yml`.
 - Fuzzing (`fuzz/README.md`): `python3 fuzz/make_seeds.py`, then
   `cd fuzz && cargo +nightly fuzz run <target> -- -max_total_time=600 -rss_limit_mb=2048`
   (`http` also needs `-detect_leaks=0`).
@@ -168,5 +185,13 @@ cd web && npm ci && npm run check && npm run build   # check = svelte-check --fa
   checked (`checked_add`, or compare against `end - pos`): a 64-bit size can wrap.
 - r2d2's idle/lifetime reaper keeps the pool's threads alive after the pool is
   dropped; `Db` turns it off (it leaked 3 threads per test app).
+- No KVM in the cloud sessions, so no Android emulator: verify PixelG with the JVM unit
+  tests and Robolectric screenshots. Maven Central sometimes answers 429 to Gradle;
+  retry after a pause.
+- `embed` runs the axum router with `oneshot` and a cookie for the local admin; anything
+  an API handler does works in PixelG for free. Unhiding needs "show hidden" on (the
+  handler 404s hidden items otherwise), in both UIs.
+- Kotlin `object` properties with `private set` clash with hand-written `setX()` functions
+  on the JVM; `Prefs` uses `@set:JvmName`.
 - Shell safety: don't `rm -rf` variables or top-level paths in commands; the session's
   safety check blocks them (and blocks the whole command, including edits in it).

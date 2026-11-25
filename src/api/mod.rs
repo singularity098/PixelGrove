@@ -8,6 +8,7 @@ mod files;
 mod hidden;
 mod library;
 mod media;
+mod organize;
 mod public;
 mod search;
 mod settings;
@@ -60,6 +61,10 @@ pub fn router() -> Router<AppState> {
                 .delete(settings::remove_root),
         )
         .route("/settings/directories", get(settings::directories))
+        .route(
+            "/settings/thumbnail-cache",
+            get(settings::thumbnail_cache).delete(settings::clear_thumbnail_cache),
+        )
         .route("/albums", get(browse::albums))
         .route("/folders/filter", get(search::filter_folders))
         .route("/folders/{id}", get(browse::folder))
@@ -73,6 +78,8 @@ pub fn router() -> Router<AppState> {
             axum::routing::put(favorites::add).delete(favorites::remove),
         )
         .route("/media/{id}/trash", post(trash::trash_media))
+        .route("/media/{id}/copy", post(organize::copy))
+        .route("/media/{id}/move", post(organize::move_media))
         .route(
             "/media/{id}/hidden",
             axum::routing::put(hidden::hide_media).delete(hidden::unhide_media),

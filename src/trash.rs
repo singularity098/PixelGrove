@@ -30,7 +30,7 @@ fn trash_location(root: &Path, original: &Path) -> PathBuf {
 }
 
 /// `path`, or `name (2).ext`, `name (3).ext`, … if it already exists.
-fn unused_path(path: &Path) -> PathBuf {
+pub(crate) fn unused_path(path: &Path) -> PathBuf {
     if !path.exists() {
         return path.to_path_buf();
     }

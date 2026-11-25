@@ -15,7 +15,8 @@ pub const CONFIG_FILE_NAME: &str = "pixelgrove.toml";
 pub struct Config {
     /// Address the HTTP server listens on.
     pub bind: SocketAddr,
-    /// Directory holding the database and config file. Kept small: no thumbnails, ever.
+    /// Directory holding the database and config file (and the thumbnail cache, if it
+    /// is turned on without a directory of its own).
     pub config_dir: PathBuf,
     /// Directories scanned for media.
     pub media_roots: Vec<PathBuf>,
@@ -23,6 +24,11 @@ pub struct Config {
     pub public_url: Option<String>,
     /// Upper bound for the in-memory preview cache, in megabytes.
     pub preview_cache_mb: u64,
+    /// Where thumbnails are kept on disk, if anywhere. Off by default: previews then
+    /// live only in memory.
+    pub thumbnail_cache: Option<PathBuf>,
+    /// Upper bound for the thumbnail cache on disk, in megabytes.
+    pub thumbnail_cache_mb: u64,
     /// The ffmpeg used for video thumbnails (a path, or a name on PATH; "off" disables).
     pub ffmpeg: String,
     /// How many of the newest videos get thumbnails made ahead of time, after each scan.
@@ -31,6 +37,9 @@ pub struct Config {
     pub rescan_interval_hours: u64,
     /// File/directory name globs that are never indexed (hidden entries are always skipped).
     pub exclude: Vec<String>,
+    /// Whether every root is scanned as soon as the indexer starts. Apps embedding
+    /// PixelGrove (`embed`) turn this off and ask for the folders that changed instead.
+    pub scan_on_start: bool,
     /// Admin account to create on first start, from `PIXELGROVE_ADMIN_USER` and
     /// `PIXELGROVE_ADMIN_PASSWORD` (environment only, so the password isn't kept in a file).
     pub initial_admin: Option<InitialAdmin>,
@@ -59,6 +68,8 @@ impl Config {
             media_roots: vec![PathBuf::from("/media")],
             public_url: None,
             preview_cache_mb: 256,
+            thumbnail_cache: None,
+            thumbnail_cache_mb: 2048,
             ffmpeg: "ffmpeg".into(),
             video_preload: 1000,
             rescan_interval_hours: 6,
@@ -66,6 +77,7 @@ impl Config {
                 .iter()
                 .map(|s| s.to_string())
                 .collect(),
+            scan_on_start: true,
             initial_admin: None,
         }
     }
@@ -105,6 +117,12 @@ impl Config {
         if let Some(mb) = file.preview_cache_mb {
             self.preview_cache_mb = mb;
         }
+        if let Some(cache) = file.thumbnail_cache {
+            self.thumbnail_cache = self.thumbnail_cache_dir(&cache);
+        }
+        if let Some(mb) = file.thumbnail_cache_mb {
+            self.thumbnail_cache_mb = mb;
+        }
         if let Some(hours) = file.rescan_interval_hours {
             self.rescan_interval_hours = hours;
         }
@@ -129,6 +147,14 @@ impl Config {
             self.preview_cache_mb = mb
                 .parse()
                 .with_context(|| format!("invalid PIXELGROVE_PREVIEW_CACHE_MB: {mb}"))?;
+        }
+        if let Some(cache) = env("PIXELGROVE_THUMBNAIL_CACHE") {
+            self.thumbnail_cache = self.thumbnail_cache_dir(&cache);
+        }
+        if let Some(mb) = env("PIXELGROVE_THUMBNAIL_CACHE_MB") {
+            self.thumbnail_cache_mb = mb
+                .parse()
+                .with_context(|| format!("invalid PIXELGROVE_THUMBNAIL_CACHE_MB: {mb}"))?;
         }
         if let Some(ffmpeg) = env("PIXELGROVE_FFMPEG") {
             self.ffmpeg = ffmpeg;
@@ -159,6 +185,15 @@ impl Config {
         }
         Ok(())
     }
+
+    /// `off` (or empty), `on` (a `thumbnails` folder in the config directory) or a path.
+    fn thumbnail_cache_dir(&self, value: &str) -> Option<PathBuf> {
+        match value.trim() {
+            "" | "off" | "false" | "0" => None,
+            "on" | "true" | "1" => Some(self.config_dir.join("thumbnails")),
+            path => Some(PathBuf::from(path)),
+        }
+    }
 }
 
 /// The on-disk config file; every field is optional.
@@ -169,6 +204,8 @@ struct FileConfig {
     media_roots: Option<Vec<PathBuf>>,
     public_url: Option<String>,
     preview_cache_mb: Option<u64>,
+    thumbnail_cache: Option<String>,
+    thumbnail_cache_mb: Option<u64>,
     rescan_interval_hours: Option<u64>,
     exclude: Option<Vec<String>>,
 }
@@ -252,6 +289,44 @@ mod tests {
         );
         assert_eq!(config.exclude, ["*.tmp", "Thumbs"]);
         assert_eq!(config.initial_admin, None);
+    }
+
+    #[test]
+    fn thumbnail_cache_is_off_unless_asked_for() {
+        let dir = tempfile::tempdir().unwrap();
+        let dir_str = dir.path().to_str().unwrap();
+        let load = |pairs: &[(&str, &str)]| {
+            let mut all = vec![("PIXELGROVE_CONFIG_DIR", dir_str)];
+            all.extend_from_slice(pairs);
+            Config::load_from(env_from(&all)).unwrap()
+        };
+        assert_eq!(load(&[]).thumbnail_cache, None);
+        assert_eq!(
+            load(&[("PIXELGROVE_THUMBNAIL_CACHE", "off")]).thumbnail_cache,
+            None
+        );
+        assert_eq!(
+            load(&[("PIXELGROVE_THUMBNAIL_CACHE", "on")]).thumbnail_cache,
+            Some(dir.path().join("thumbnails"))
+        );
+        let custom = load(&[
+            ("PIXELGROVE_THUMBNAIL_CACHE", "/cache/pg"),
+            ("PIXELGROVE_THUMBNAIL_CACHE_MB", "500"),
+        ]);
+        assert_eq!(custom.thumbnail_cache, Some(PathBuf::from("/cache/pg")));
+        assert_eq!(custom.thumbnail_cache_mb, 500);
+
+        std::fs::write(
+            dir.path().join(CONFIG_FILE_NAME),
+            "thumbnail_cache = \"on\"\nthumbnail_cache_mb = 100\n",
+        )
+        .unwrap();
+        let from_file = load(&[]);
+        assert_eq!(
+            from_file.thumbnail_cache,
+            Some(dir.path().join("thumbnails"))
+        );
+        assert_eq!(from_file.thumbnail_cache_mb, 100);
     }
 
     #[test]

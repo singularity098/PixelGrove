@@ -6,12 +6,16 @@ An ultra-light, fast, self-hosted photo and video library written in Rust.
 
 - Browse folders the way Android does, plus a timeline, search, map, explore, favorites,
   trash and a File View of the real folder tree.
-- Previews are made on the fly and kept only in memory: nothing is written next to your
-  photos, and `/config` holds just a small database (about 20 MB for 100k files).
+- Previews are made on the fly and kept in memory: nothing is written next to your
+  photos, and `/config` holds just a small database (about 20 MB for 100k files). A
+  thumbnail cache on disk can be turned on if you want one (off by default).
 - Photos in JPEG, PNG, WebP, GIF, AVIF and JPEG XL (shown in any browser: the server
   converts it); videos in MP4, MOV, WebM and MKV (repackaged on the fly by the server so
   any browser can play them, with AC-3/DTS audio converted to AAC).
 - Share a photo or folder with a link that needs no account.
+- Copy or move a photo or video to another folder from the viewer.
+- **PixelG**, an Android app with the same features and a native interface, runs the
+  same engine on the phone itself (see [android/README.md](android/README.md)).
 - Slideshows, nine colour themes (dark, light, AMOLED black, Dracula, Tokyo Night and the
   four Catppuccin flavours), works on phones (swipe from the left edge for the menu,
   2, 3 or 4 per row for folders and for photos, a handle to drag through long pages,
@@ -116,6 +120,13 @@ be restored from **Trash** for 30 days, then it is deleted for good. Trash needs
 media mounted read-write; on a read-only mount (`:ro`) PixelGrove says so and leaves the
 file alone. Favorites are per user and stored only in PixelGrove's database.
 
+## Copying and moving
+
+**Copy or move…** in the viewer (editors and admins) picks another folder of the library
+from the folder tree, optionally creating a new folder inside it. The file keeps its
+modification time; a name that's taken gets " (2)". A moved item keeps its favorites,
+hidden mark and share links. Like Trash, this needs the media mounted read-write.
+
 ## Hiding photos and folders
 
 The eye button in the viewer (or **h**) hides a photo or video, and **Hide** on a folder
@@ -206,6 +217,16 @@ about your library is sent anywhere).
 worked out offline at scan time from a bundled table of GeoNames cities (see
 [data/README.md](data/README.md)); they're also searchable, e.g. "kyoto" or "france".
 
+## Android app (PixelG)
+
+[PixelG](android/README.md) is PixelGrove for Android phones: the same Rust engine,
+running inside the app with a native Jetpack Compose interface, for the photos and videos
+on the phone. It adds a camera button, Edit (opens another app's editor), sharing through
+the system share sheet (location removed) and HEIC support, keeps thumbnails cached on
+disk, and finds changes through inotify and MediaStore generation numbers instead of
+rescanning. Build it with `cd android && ./gradlew assembleRelease`; the Android workflow
+also builds the APK on every push.
+
 ## Installing as an app
 
 PixelGrove is a Progressive Web App: in Chrome or Edge use **Install** in the address
@@ -225,6 +246,8 @@ Settings come from `/config/pixelgrove.toml` (optional), overridden by environme
 | `PIXELGROVE_MEDIA_ROOTS` | `/media` | `:`-separated directories to scan |
 | `PIXELGROVE_PUBLIC_URL` | — | External URL used in share links |
 | `PIXELGROVE_PREVIEW_CACHE_MB` | `256` | In-memory preview cache size (photo previews and video thumbnails) |
+| `PIXELGROVE_THUMBNAIL_CACHE` | `off` | `on` keeps thumbnails on disk too (in `<config dir>/thumbnails`), or give a directory. They're then made in the background for the whole library and survive restarts |
+| `PIXELGROVE_THUMBNAIL_CACHE_MB` | `2048` | Size limit for the thumbnail cache on disk; the least recently used go first |
 | `PIXELGROVE_FFMPEG` | `ffmpeg` (in the image: the bundled one) | ffmpeg used for video thumbnails and MKV playback; `off` to have browsers grab frames instead (and get MKV files as they are, which only some browsers play) |
 | `PIXELGROVE_VIDEO_PRELOAD` | `1000` | Newest videos whose thumbnails are made in the background after each scan (`0`: only when viewed) |
 | `PIXELGROVE_RESCAN_INTERVAL_HOURS` | `6` | Hours between full rescans |

@@ -31,6 +31,7 @@ jxl-oxide = "0.12.6"
 libmimalloc-sys = { version = "0.1.49", features = ["extended"] }
 lru = "0.18.5"
 memchr = "2.8.3"
+memmap2 = "0.9"
 mimalloc = { version = "0.1.52", default-features = false }
 nom-exif = "3.8.0"
 notify = "8.2.0"

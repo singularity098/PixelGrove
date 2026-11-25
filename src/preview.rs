@@ -1,9 +1,10 @@
-//! Preview images, generated on demand and cached in memory only (nothing is written
-//! to disk). JPEGs are decoded at reduced scale (1/2, 1/4 or 1/8) straight from the
-//! DCT data, which makes thumbnails of large photos cheap.
+//! Preview images, generated on demand and cached in memory (and on disk too when the
+//! optional thumbnail cache is on: see `thumbcache`). JPEGs are decoded at reduced
+//! scale (1/2, 1/4 or 1/8) straight from the DCT data, or thumbnails are made from the
+//! preview the camera embedded in the EXIF data, which makes them cheap.
 
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, Read};
 use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -14,6 +15,8 @@ use fast_image_resize::images::Image;
 use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer};
 use lru::LruCache;
 use tokio::sync::Semaphore;
+
+use crate::thumbcache::DiskCache;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Variant {
@@ -76,6 +79,8 @@ pub struct Previews {
     jxl: Semaphore,
     /// Makes video thumbnails, when ffmpeg is installed.
     ffmpeg: Option<crate::video::Ffmpeg>,
+    /// The optional thumbnail cache on disk.
+    disk: Option<Arc<DiskCache>>,
 }
 
 /// Identifies a preview; the mtime and size make edits invalidate old entries.
@@ -95,7 +100,36 @@ impl Previews {
             permits: Semaphore::new(workers),
             jxl: Semaphore::new(1),
             ffmpeg: None,
+            disk: None,
         }
+    }
+
+    pub fn with_disk_cache(mut self, disk: Option<Arc<DiskCache>>) -> Self {
+        self.disk = disk;
+        self
+    }
+
+    pub fn disk_cache(&self) -> Option<&Arc<DiskCache>> {
+        self.disk.as_ref()
+    }
+
+    /// A preview from memory or the disk cache, without making one.
+    pub fn cached(&self, key: &Key, path: &Path) -> Option<Bytes> {
+        if let Some(bytes) = self.cache.lock().unwrap().get(key) {
+            return Some(bytes);
+        }
+        // Disk hits stay out of the memory cache: they're memory-mapped, so the page
+        // cache already keeps the busy ones in memory.
+        self.disk.as_ref()?.get(path, key)
+    }
+
+    /// Keeps a preview made elsewhere (the Android app makes video and HEIC thumbnails
+    /// with the platform's decoders).
+    pub fn store(&self, key: Key, path: &Path, jpeg: Bytes) {
+        if let Some(disk) = &self.disk {
+            disk.put(path, &key, &jpeg);
+        }
+        self.cache.lock().unwrap().put(key, jpeg);
     }
 
     pub fn with_ffmpeg(mut self, ffmpeg: Option<crate::video::Ffmpeg>) -> Self {
@@ -118,24 +152,25 @@ impl Previews {
         path: &Path,
         duration_ms: Option<i64>,
     ) -> Result<Option<Bytes>> {
+        if let Some(bytes) = self.cached(&key, path) {
+            return Ok(Some(bytes));
+        }
         let Some(ffmpeg) = &self.ffmpeg else {
             return Ok(None);
         };
-        if let Some(bytes) = self.cache.lock().unwrap().get(&key) {
-            return Ok(Some(bytes));
-        }
         let _permit = self.permits.acquire().await?;
-        if let Some(bytes) = self.cache.lock().unwrap().get(&key) {
+        if let Some(bytes) = self.cached(&key, path) {
             return Ok(Some(bytes));
         }
         let bytes = Bytes::from(ffmpeg.frame(path, key.variant, duration_ms).await?);
-        self.cache.lock().unwrap().put(key, bytes.clone());
+        self.store(key, path, bytes.clone());
         Ok(Some(bytes))
     }
 
-    /// Whether a preview is already in memory.
-    pub fn is_cached(&self, key: &Key) -> bool {
+    /// Whether a preview is already in memory (or in the disk cache).
+    pub fn is_cached(&self, key: &Key, path: &Path) -> bool {
         self.cache.lock().unwrap().contains(key)
+            || self.disk.as_ref().is_some_and(|d| d.contains(path, key))
     }
 
     pub async fn get(
@@ -144,7 +179,7 @@ impl Previews {
         path: &Path,
         orientation: Option<u16>,
     ) -> Result<Preview> {
-        if let Some(bytes) = self.cache.lock().unwrap().get(&key) {
+        if let Some(bytes) = self.cached(&key, path) {
             return Ok(Preview::Jpeg(bytes));
         }
         let _jxl = if crate::jxl::is_jxl(path) {
@@ -154,18 +189,18 @@ impl Previews {
         };
         let _permit = self.permits.acquire().await?;
         // Another request may have produced it while we waited.
-        if let Some(bytes) = self.cache.lock().unwrap().get(&key) {
+        if let Some(bytes) = self.cached(&key, path) {
             return Ok(Preview::Jpeg(bytes));
         }
-        let path = path.to_path_buf();
+        let owned = path.to_path_buf();
         let rendered = tokio::task::spawn_blocking(move || {
-            render(&path, key.variant, orientation.unwrap_or(1))
+            render(&owned, key.variant, orientation.unwrap_or(1))
         })
         .await??;
         Ok(match rendered {
             Some(jpeg) => {
                 let bytes = Bytes::from(jpeg);
-                self.cache.lock().unwrap().put(key, bytes.clone());
+                self.store(key, path, bytes.clone());
                 Preview::Jpeg(bytes)
             }
             None => Preview::Original,
@@ -193,7 +228,10 @@ fn render_unguarded(
         .unwrap_or_default();
     let file_size = std::fs::metadata(path)?.len();
     let pixels = match ext.as_str() {
-        "jpg" | "jpeg" => decode_jpeg(File::open(path)?, variant)?,
+        "jpg" | "jpeg" => match embedded_preview(path, variant)? {
+            Some(preview) => decode_jpeg(std::io::Cursor::new(preview), variant)?,
+            None => decode_jpeg(File::open(path)?, variant)?,
+        },
         // Browsers mostly can't show JPEG XL, so it's always converted. Its orientation
         // is in the image header: rendered pixels come out upright, a rebuilt JPEG
         // needs turning.
@@ -239,6 +277,104 @@ fn render_unguarded(
     let resized = resize(pixels, width, height)?;
     let oriented = orient(resized, orientation);
     encode_jpeg(&oriented, variant.quality()).map(Some)
+}
+
+/// The preview JPEG a camera embedded in the EXIF data (IFD1), when it's big enough
+/// for `variant` and has the same shape as the photo (some cameras letterbox a 4:3
+/// preview of a 16:9 photo). Decoding it takes about a millisecond, against tens of
+/// milliseconds for even a 1/8-scale decode of a 12-megapixel photo. Only thumbnails
+/// use it: embedded previews are rarely sharp enough for the viewer.
+fn embedded_preview(path: &Path, variant: Variant) -> Result<Option<Vec<u8>>> {
+    if variant != Variant::Thumb {
+        return Ok(None);
+    }
+    // EXIF lives in an APP1 segment (at most 64 KiB) at the start of the file.
+    let mut head = Vec::with_capacity(EXIF_HEAD);
+    std::io::Read::take(File::open(path)?, EXIF_HEAD as u64).read_to_end(&mut head)?;
+    let Some(preview) = exif_thumbnail(&head) else {
+        return Ok(None);
+    };
+    let (Ok(full), Ok(small)) = (imagesize::size(path), imagesize::blob_size(preview)) else {
+        return Ok(None);
+    };
+    let (w, h) = (full.width as f64, full.height as f64);
+    let (tw, th) = (small.width as f64, small.height as f64);
+    let same_shape = w > 0.0 && h > 0.0 && th > 0.0 && ((tw / th) / (w / h) - 1.0).abs() < 0.02;
+    let (target_w, target_h) = variant.target(full.width as u32, full.height as u32);
+    let big_enough = tw >= f64::from(target_w) && th >= f64::from(target_h);
+    Ok((same_shape && big_enough).then(|| preview.to_vec()))
+}
+
+const EXIF_HEAD: usize = 128 * 1024;
+
+/// Finds the IFD1 thumbnail (JPEGInterchangeFormat) in the first bytes of a JPEG.
+fn exif_thumbnail(jpeg: &[u8]) -> Option<&[u8]> {
+    if !jpeg.starts_with(&[0xFF, 0xD8]) {
+        return None;
+    }
+    let mut pos = 2;
+    // Walk the segments before the image data, looking for APP1 "Exif\0\0".
+    loop {
+        let marker = *jpeg.get(pos..pos + 2)?.get(1)?;
+        if jpeg[pos] != 0xFF || marker == 0xDA || marker == 0xD9 {
+            return None;
+        }
+        let len = usize::from(u16::from_be_bytes(
+            jpeg.get(pos + 2..pos + 4)?.try_into().ok()?,
+        ));
+        let segment = jpeg.get(pos + 4..(pos + 2).checked_add(len)?)?;
+        if marker == 0xE1 && segment.starts_with(b"Exif\0\0") {
+            return tiff_thumbnail(&segment[6..]);
+        }
+        pos = pos.checked_add(2 + len)?;
+    }
+}
+
+fn tiff_thumbnail(tiff: &[u8]) -> Option<&[u8]> {
+    let little = match tiff.get(..2)? {
+        b"II" => true,
+        b"MM" => false,
+        _ => return None,
+    };
+    let u16_at = |at: usize| -> Option<u16> {
+        let b: [u8; 2] = tiff.get(at..at.checked_add(2)?)?.try_into().ok()?;
+        Some(if little {
+            u16::from_le_bytes(b)
+        } else {
+            u16::from_be_bytes(b)
+        })
+    };
+    let u32_at = |at: usize| -> Option<usize> {
+        let b: [u8; 4] = tiff.get(at..at.checked_add(4)?)?.try_into().ok()?;
+        let v = if little {
+            u32::from_le_bytes(b)
+        } else {
+            u32::from_be_bytes(b)
+        };
+        usize::try_from(v).ok()
+    };
+    // IFD0, then the "next IFD" link after its entries leads to IFD1.
+    let ifd0 = u32_at(4)?;
+    let entries0 = usize::from(u16_at(ifd0)?);
+    let ifd1 = u32_at(
+        ifd0.checked_add(2)?
+            .checked_add(entries0.checked_mul(12)?)?,
+    )?;
+    if ifd1 == 0 {
+        return None;
+    }
+    let (mut offset, mut length) = (None, None);
+    for i in 0..usize::from(u16_at(ifd1)?) {
+        let entry = ifd1.checked_add(2)?.checked_add(i.checked_mul(12)?)?;
+        match u16_at(entry)? {
+            0x0201 => offset = u32_at(entry + 8),
+            0x0202 => length = u32_at(entry + 8),
+            _ => {}
+        }
+    }
+    let (offset, length) = (offset?, length?);
+    let thumb = tiff.get(offset..offset.checked_add(length)?)?;
+    thumb.starts_with(&[0xFF, 0xD8]).then_some(thumb)
 }
 
 struct Pixels {
@@ -460,6 +596,88 @@ mod tests {
         assert_eq!(dims(&thumb), (480, 360));
         let large = render(&path, Variant::Large, 1).unwrap().unwrap();
         assert_eq!(dims(&large), (2048, 1536));
+    }
+
+    /// `main` with `thumb` embedded as its EXIF (IFD1) thumbnail.
+    fn with_exif_thumbnail(main: &[u8], thumb: &[u8]) -> Vec<u8> {
+        let mut tiff = b"II\x2a\x00\x08\x00\x00\x00".to_vec();
+        tiff.extend_from_slice(&[0, 0, 14, 0, 0, 0]); // IFD0: no entries, IFD1 at 14
+        tiff.extend_from_slice(&2u16.to_le_bytes());
+        for (tag, value) in [(0x0201u16, 44u32), (0x0202, thumb.len() as u32)] {
+            tiff.extend_from_slice(&tag.to_le_bytes());
+            tiff.extend_from_slice(&4u16.to_le_bytes()); // LONG
+            tiff.extend_from_slice(&1u32.to_le_bytes());
+            tiff.extend_from_slice(&value.to_le_bytes());
+        }
+        tiff.extend_from_slice(&0u32.to_le_bytes());
+        tiff.extend_from_slice(thumb);
+        let mut out = vec![0xFF, 0xD8, 0xFF, 0xE1];
+        out.extend_from_slice(&((tiff.len() + 8) as u16).to_be_bytes());
+        out.extend_from_slice(b"Exif\0\0");
+        out.extend_from_slice(&tiff);
+        out.extend_from_slice(&main[2..]);
+        out
+    }
+
+    fn solid_jpeg(w: u16, h: u16, rgb: [u8; 3]) -> Vec<u8> {
+        let data: Vec<u8> = (0..w as usize * h as usize).flat_map(|_| rgb).collect();
+        let mut out = Vec::new();
+        jpeg_encoder::Encoder::new(&mut out, 90)
+            .encode(&data, w, h, jpeg_encoder::ColorType::Rgb)
+            .unwrap();
+        out
+    }
+
+    fn centre_pixel(jpeg: &[u8]) -> Vec<u8> {
+        let mut decoder = jpeg_decoder::Decoder::new(jpeg);
+        let pixels = decoder.decode().unwrap();
+        let info = decoder.info().unwrap();
+        let at = (info.height as usize / 2 * info.width as usize + info.width as usize / 2) * 3;
+        pixels[at..at + 3].to_vec()
+    }
+
+    #[test]
+    fn thumbnails_come_from_the_embedded_preview_when_it_fits() {
+        let dir = tempfile::tempdir().unwrap();
+        let main = solid_jpeg(4000, 3000, [0, 0, 255]);
+        let path = dir.path().join("camera.jpg");
+        std::fs::write(
+            &path,
+            with_exif_thumbnail(&main, &solid_jpeg(512, 384, [255, 0, 0])),
+        )
+        .unwrap();
+        let thumb = render(&path, Variant::Thumb, 1).unwrap().unwrap();
+        assert_eq!(dims(&thumb), (480, 360));
+        assert!(
+            centre_pixel(&thumb)[0] > 200,
+            "made from the red embedded preview"
+        );
+        let large = render(&path, Variant::Large, 1).unwrap().unwrap();
+        assert!(
+            centre_pixel(&large)[2] > 200,
+            "the viewer decodes the photo itself"
+        );
+
+        // Too small, or another shape (letterboxed): the photo itself is decoded.
+        for embedded in [
+            solid_jpeg(160, 120, [255, 0, 0]),
+            solid_jpeg(640, 360, [255, 0, 0]),
+        ] {
+            std::fs::write(&path, with_exif_thumbnail(&main, &embedded)).unwrap();
+            let thumb = render(&path, Variant::Thumb, 1).unwrap().unwrap();
+            assert!(centre_pixel(&thumb)[2] > 200);
+        }
+
+        // Cut-off or scribbled-over EXIF finds nothing rather than reading past the end.
+        let good = with_exif_thumbnail(&main, &solid_jpeg(512, 384, [255, 0, 0]));
+        for end in 0..200 {
+            assert!(exif_thumbnail(&good[..end]).is_none());
+        }
+        for at in 10..60 {
+            let mut broken = good.clone();
+            broken[at] = 0xFF;
+            let _ = exif_thumbnail(&broken);
+        }
     }
 
     #[test]

@@ -310,10 +310,10 @@ async fn preload(db: &Db, previews: &Arc<Previews>, count: usize) -> Result<()> 
             mtime,
             size,
         };
-        if previews.is_cached(&key) {
+        let path = Path::new(&folder).join(&name);
+        if previews.is_cached(&key, &path) {
             continue;
         }
-        let path = Path::new(&folder).join(&name);
         match previews.video(key, &path, duration_ms).await {
             Ok(_) => made += 1,
             Err(err) => tracing::debug!(path = %path.display(), "video thumbnail failed: {err:#}"),

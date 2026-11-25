@@ -1,4 +1,4 @@
-//! Admin settings: the media folders in the library.
+//! Admin settings: the media folders in the library, and the thumbnail cache.
 
 use std::path::PathBuf;
 
@@ -149,6 +149,37 @@ pub async fn directories(
         .ok_or_else(|| ApiError::status(StatusCode::NOT_FOUND, "That folder can't be opened."))
 }
 
+#[derive(Serialize)]
+pub struct ThumbnailCache {
+    /// Off unless `PIXELGROVE_THUMBNAIL_CACHE` turns it on (always on in PixelG).
+    enabled: bool,
+    dir: Option<String>,
+    /// Bytes used and allowed on disk.
+    size: u64,
+    capacity: u64,
+}
+
+pub async fn thumbnail_cache(State(state): State<AppState>, _: AdminUser) -> Json<ThumbnailCache> {
+    let disk = state.previews.disk_cache();
+    Json(ThumbnailCache {
+        enabled: disk.is_some(),
+        dir: disk.map(|d| d.dir().to_string_lossy().into_owned()),
+        size: disk.map_or(0, |d| d.size()),
+        capacity: disk.map_or(0, |d| d.capacity()),
+    })
+}
+
+/// Deletes every cached thumbnail; they're made again as they're needed.
+pub async fn clear_thumbnail_cache(
+    State(state): State<AppState>,
+    _: AdminUser,
+) -> ApiResult<StatusCode> {
+    if let Some(disk) = state.previews.disk_cache().cloned() {
+        tokio::task::spawn_blocking(move || disk.clear()).await?;
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// Starts a full rescan now, instead of waiting for the next scheduled one.
 pub async fn rescan(State(state): State<AppState>, _: AdminUser) -> StatusCode {
     if !state.indexer.status().scanning {
@@ -167,6 +198,25 @@ mod tests {
 
     use crate::api::test_support::TestApp;
     use crate::testdata;
+
+    #[tokio::test]
+    async fn thumbnail_cache_is_off_by_default() {
+        let app = TestApp::new();
+        let admin = app.setup_admin().await;
+        let cache = app
+            .send("GET", "/api/settings/thumbnail-cache", None, Some(&admin))
+            .await;
+        assert_eq!(cache.body["enabled"], false);
+        let cleared = app
+            .send(
+                "DELETE",
+                "/api/settings/thumbnail-cache",
+                None,
+                Some(&admin),
+            )
+            .await;
+        assert_eq!(cleared.status, StatusCode::NO_CONTENT);
+    }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn add_and_remove_media_folders() {

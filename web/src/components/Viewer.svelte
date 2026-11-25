@@ -12,6 +12,7 @@
     type MediaUrls,
   } from '../lib/media.svelte';
   import Icon from './Icon.svelte';
+  import MoveDialog from './MoveDialog.svelte';
   import ShareDialog from './ShareDialog.svelte';
   import Slideshow from './Slideshow.svelte';
   import StreamPlayer from './StreamPlayer.svelte';
@@ -47,6 +48,7 @@
     !readOnly && session.current.status === 'signed-in' && session.current.user.role !== 'viewer',
   );
   let sharing = $state(false);
+  let moving = $state(false);
   let slideshow = $state(false);
   // The overflow menu on narrow screens.
   let menu = $state(false);
@@ -472,6 +474,9 @@
           title={detail?.hidden === 'folder' ? 'In a hidden folder (unhide the folder)' : detail?.hidden ? 'Unhide (h)' : isAdmin ? 'Hide from everyone (h)' : 'Hide (h)'}>
           <Icon name={detail?.hidden ? 'eye' : 'eyeOff'} /><span class="label">{detail?.hidden ? 'Unhide' : 'Hide'}</span>
         </button>
+        <button class="icon" style="order: 9" onclick={() => (moving = true)} disabled={!detail} aria-label="Copy or move to folder" title="Copy or move to another folder">
+          <Icon name="folder" /><span class="label">Copy or move…</span>
+        </button>
         <button class="icon" style="order: 10" onclick={moveToTrash} disabled={trashing} aria-label="Move to trash" title="Move to trash (Delete)">
           <Icon name="trash" /><span class="label">Move to trash</span>
         </button>
@@ -569,6 +574,16 @@
   {#if toast}<div class="toast" role="status">{toast}</div>{/if}
   {#if sharing}
     <ShareDialog target={{ media_id: item.id, name: item.name }} onclose={() => (sharing = false)} />
+  {/if}
+  {#if moving && detail}
+    <MoveDialog
+      item={{ id: detail.id, name: detail.name }}
+      folderId={detail.folder_id ?? null}
+      onclose={() => (moving = false)}
+      ondone={({ moved, folder }) => {
+        flash(`${moved ? 'Moved' : 'Copied'} to ${folder}`);
+        if (moved) onremoved(item.id);
+      }} />
   {/if}
   {#if slideshow}
     <Slideshow source={slides} startId={item.id} {urls} onclose={endSlideshow} />

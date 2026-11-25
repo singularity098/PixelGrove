@@ -3,6 +3,7 @@
 
 use std::fs::Metadata as FsMetadata;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::UNIX_EPOCH;
 
 use nom_exif::{EntryValue, ExifTag, MediaKind as SourceKind, MediaParser, MediaSource};
@@ -23,11 +24,21 @@ impl MediaKind {
     }
 }
 
-/// Media types supported in v1, by lower-case file extension.
+/// HEIC/HEIF photos are indexed only where something can show them: the Android app
+/// decodes them with the platform's decoder (browsers other than Safari can't).
+static PLATFORM_FORMATS: AtomicBool = AtomicBool::new(false);
+
+/// Also index HEIC/HEIF (see [`PLATFORM_FORMATS`]).
+pub fn enable_platform_formats() {
+    PLATFORM_FORMATS.store(true, Ordering::Relaxed);
+}
+
+/// Media types supported, by lower-case file extension.
 pub fn kind_for_path(path: &Path) -> Option<MediaKind> {
     let ext = path.extension()?.to_str()?.to_ascii_lowercase();
     match ext.as_str() {
         "jpg" | "jpeg" | "png" | "webp" | "gif" | "avif" | "jxl" => Some(MediaKind::Image),
+        "heic" | "heif" if PLATFORM_FORMATS.load(Ordering::Relaxed) => Some(MediaKind::Image),
         "mp4" | "m4v" | "webm" | "mov" | "mkv" => Some(MediaKind::Video),
         _ => None,
     }

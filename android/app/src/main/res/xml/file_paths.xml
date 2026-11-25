@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Files handed to other apps: copies without location data (sharing), and originals
+     (Edit / Open with, when MediaStore doesn't know a file). -->
+<paths>
+    <cache-path name="shared" path="shared/" />
+    <external-path name="storage" path="." />
+</paths>

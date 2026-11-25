@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The leaf-aperture icon (from PixelGrove's logo), sized for the adaptive icon's safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <group android:scaleX="0.5405" android:scaleY="0.5405" android:translateX="19.405" android:translateY="19.405">
+        <path android:pathData="M64,10A54,54 0 1,1 64,118A54,54 0 1,1 64,10Z" android:fillColor="#0a1914" android:strokeColor="#2f8f60" android:strokeWidth="3"/>
+        <group android:rotation="0" android:pivotX="64" android:pivotY="64">
+            <path android:pathData="M64,64Q50,40 64,14A50,50 0 0,1 107.3,39Q77.8,39.9 64,64Z" android:fillColor="#14573a" android:strokeColor="#07100c" android:strokeWidth="1.5" android:strokeLineJoin="round"/>
+        </group>
+        <group android:rotation="60" android:pivotX="64" android:pivotY="64">
+            <path android:pathData="M64,64Q50,40 64,14A50,50 0 0,1 107.3,39Q77.8,39.9 64,64Z" android:fillColor="#1f8a55" android:strokeColor="#07100c" android:strokeWidth="1.5" android:strokeLineJoin="round"/>
+        </group>
+        <group android:rotation="120" android:pivotX="64" android:pivotY="64">
+            <path android:pathData="M64,64Q50,40 64,14A50,50 0 0,1 107.3,39Q77.8,39.9 64,64Z" android:fillColor="#14573a" android:strokeColor="#07100c" android:strokeWidth="1.5" android:strokeLineJoin="round"/>
+        </group>
+        <group android:rotation="180" android:pivotX="64" android:pivotY="64">
+            <path android:pathData="M64,64Q50,40 64,14A50,50 0 0,1 107.3,39Q77.8,39.9 64,64Z" android:fillColor="#2a9a5e" android:strokeColor="#07100c" android:strokeWidth="1.5" android:strokeLineJoin="round"/>
+        </group>
+        <group android:rotation="240" android:pivotX="64" android:pivotY="64">
+            <path android:pathData="M64,64Q50,40 64,14A50,50 0 0,1 107.3,39Q77.8,39.9 64,64Z" android:fillColor="#1f6f4a" android:strokeColor="#07100c" android:strokeWidth="1.5" android:strokeLineJoin="round"/>
+        </group>
+        <group android:rotation="300" android:pivotX="64" android:pivotY="64">
+            <path android:pathData="M64,64Q50,40 64,14A50,50 0 0,1 107.3,39Q77.8,39.9 64,64Z" android:fillColor="#4fc184" android:strokeColor="#07100c" android:strokeWidth="1.5" android:strokeLineJoin="round"/>
+        </group>
+        <path android:pathData="M64,53A11,11 0 1,1 64,75A11,11 0 1,1 64,53Z" android:fillColor="#07100c"/>
+        <path android:pathData="M64,59A5,5 0 1,1 64,69A5,5 0 1,1 64,59Z" android:fillColor="#8ee4b4"/>
+    </group>
+</vector>

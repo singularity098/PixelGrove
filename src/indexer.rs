@@ -45,6 +45,8 @@ pub struct IndexStatus {
     /// Unix seconds when the last full scan finished.
     pub last_full_scan_at: Option<i64>,
     pub last_full_scan: Option<ScanStats>,
+    /// Goes up whenever a scan changed the library, so clients know to reload.
+    pub generation: u64,
 }
 
 #[derive(Clone)]
@@ -56,6 +58,7 @@ struct Inner {
     db: Db,
     excludes: Excludes,
     rescan_interval: Duration,
+    scan_on_start: bool,
     /// Roots from the config file or environment; the web UI can't remove these.
     configured: Vec<PathBuf>,
     /// Every root (configured and added in the web UI) as `(id, path)`.
@@ -77,6 +80,7 @@ impl Indexer {
                 db,
                 excludes,
                 rescan_interval: Duration::from_secs(config.rescan_interval_hours.max(1) * 3600),
+                scan_on_start: config.scan_on_start,
                 configured,
                 roots: RwLock::new(roots),
                 watcher: Mutex::new(None),
@@ -99,6 +103,9 @@ impl Indexer {
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(this.inner.rescan_interval);
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            if !this.inner.scan_on_start {
+                interval.tick().await;
+            }
             loop {
                 interval.tick().await; // The first tick fires immediately.
                 this.full_scan().await;
@@ -131,6 +138,9 @@ impl Indexer {
         let mut status = self.inner.status.lock().unwrap();
         status.scanning = false;
         if let Ok(stats) = result {
+            if stats.changed() {
+                status.generation += 1;
+            }
             tracing::info!(
                 media_added = stats.media_added,
                 media_updated = stats.media_updated,
@@ -196,9 +206,10 @@ impl Indexer {
         let inner = self.inner.clone();
         let _ = tokio::task::spawn_blocking(move || {
             for (root_id, root, target) in targets {
-                if let Err(err) = scanner::scan(&inner.db, root_id, &root, &target, &inner.excludes)
-                {
-                    tracing::warn!(path = %target.display(), "scan failed: {err:#}");
+                match scanner::scan(&inner.db, root_id, &root, &target, &inner.excludes) {
+                    Ok(stats) if stats.changed() => inner.status.lock().unwrap().generation += 1,
+                    Ok(_) => {}
+                    Err(err) => tracing::warn!(path = %target.display(), "scan failed: {err:#}"),
                 }
             }
         })
@@ -288,17 +299,10 @@ impl Indexer {
 
     /// Saves the added roots and brings the database and root list in line.
     fn apply_roots(&self, extra: &[PathBuf]) -> Result<()> {
-        let list: Vec<String> = extra
-            .iter()
-            .map(|p| p.to_string_lossy().into_owned())
-            .collect();
-        self.inner.db.conn()?.execute(
-            "INSERT INTO settings (key, value) VALUES (?1, ?2)
-             ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-            [EXTRA_ROOTS_KEY, &serde_json::to_string(&list)?],
-        )?;
+        store_extra_roots(&self.inner.db, extra)?;
         let roots = scanner::sync_roots(&self.inner.db, &all_roots(&self.inner.configured, extra))?;
         *self.inner.roots.write().unwrap() = roots;
+        self.inner.status.lock().unwrap().generation += 1;
         Ok(())
     }
 
@@ -365,6 +369,20 @@ fn watch_root(watcher: &mut Watcher, root: &Path) -> bool {
 }
 
 /// Media folders added in the web UI.
+/// Saves the media folders added in the web UI (or by an embedding app).
+pub fn store_extra_roots(db: &Db, extra: &[PathBuf]) -> Result<()> {
+    let list: Vec<String> = extra
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    db.conn()?.execute(
+        "INSERT INTO settings (key, value) VALUES (?1, ?2)
+         ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+        [EXTRA_ROOTS_KEY, &serde_json::to_string(&list)?],
+    )?;
+    Ok(())
+}
+
 pub fn load_extra_roots(db: &Db) -> Result<Vec<PathBuf>> {
     let value: Option<String> = rusqlite::OptionalExtension::optional(db.conn()?.query_row(
         "SELECT value FROM settings WHERE key = ?1",
