@@ -68,9 +68,9 @@ first (`-Ppixelg.abis=arm64-v8a` builds for phones only, which is faster;
 `keystore.properties` (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`) or the
 `PIXELG_KEYSTORE_*` environment variables, and with the debug key otherwise. The Android
 workflow builds the APK on every push and keeps it as an artifact, signed with the
-release key from the repository's Actions secrets: `PIXELG_KEYSTORE_BASE64` (the keystore
-file, `base64 -w0 pixelg.keystore`), `PIXELG_KEYSTORE_PASSWORD`, `PIXELG_KEY_ALIAS` and
-`PIXELG_KEY_PASSWORD` (optional, defaults to the store password). Pushes fail without
+release key from the repository's Actions secrets: `ANDROID_KEYSTORE_BASE64` (the keystore
+file, `base64 -w0 pixelg.keystore`), `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` and
+`ANDROID_KEY_PASSWORD` (optional, defaults to the store password). Pushes fail without
 them: a debug-signed APK won't install over a release-signed one.
 
 `./gradlew testDebugUnitTest` runs the engine (built for the host) through JNI from the
