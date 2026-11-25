@@ -45,6 +45,15 @@ jobs:
         run: ./gradlew testDebugUnitTest --console=plain
       - name: Release APK
         run: ./gradlew assembleRelease --console=plain
+      # Android won't System.loadLibrary a library with static (initial-exec) TLS: the app
+      # would close at launch. Unit tests run the host build, so they can't catch it.
+      - name: The engine loads on Android (no static TLS)
+        run: |
+          for so in app/build/rustJniLibs/*/libpixelg.so; do
+            if "$ANDROID_NDK_HOME"/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf -d "$so" | grep -q STATIC_TLS; then
+              echo "::error::$so uses static TLS; Android refuses to load it"; exit 1
+            fi
+          done
       - uses: actions/upload-artifact@v5
         with:
           name: pixelg-apk

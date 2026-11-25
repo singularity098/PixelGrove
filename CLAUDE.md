@@ -188,6 +188,10 @@ cd web && npm ci && npm run check && npm run build   # check = svelte-check --fa
 - No KVM in the cloud sessions, so no Android emulator: verify PixelG with the JVM unit
   tests and Robolectric screenshots. Maven Central sometimes answers 429 to Gradle;
   retry after a pause.
+- Android refuses to `System.loadLibrary` a library with static (initial-exec) TLS
+  (`STATIC_TLS` in `llvm-readelf -d`), and PixelG then closes at every launch. mimalloc's
+  C code is built that way, so it's left out on Android (Scudo instead). The JVM unit
+  tests use the host build and can't see this; the Android workflow checks the flag.
 - `embed` runs the axum router with `oneshot` and a cookie for the local admin; anything
   an API handler does works in PixelG for free. Unhiding needs "show hidden" on (the
   handler 404s hidden items otherwise), in both UIs.

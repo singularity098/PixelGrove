@@ -45,12 +45,18 @@ object Engine {
     suspend fun start(context: Context) {
         if (started) return
         val result = withContext(Dispatchers.IO) {
-            Native.start(
-                File(context.filesDir, "library").absolutePath,
-                File(context.cacheDir, "thumbnails").absolutePath,
-                defaultRoots(),
-                1024,
-            )
+            // Loading the engine library can fail (an incompatible build): say so on screen
+            // rather than crash, which leaves the app closing at every launch.
+            try {
+                Native.start(
+                    File(context.filesDir, "library").absolutePath,
+                    File(context.cacheDir, "thumbnails").absolutePath,
+                    defaultRoots(),
+                    1024,
+                )
+            } catch (e: LinkageError) {
+                "The engine library couldn't be loaded: ${e.message ?: e}"
+            }
         }
         if (result != null) {
             error = result
