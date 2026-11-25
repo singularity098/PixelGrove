@@ -43,8 +43,38 @@ jobs:
       - uses: gradle/actions/setup-gradle@v5
       - name: Unit tests (the engine through JNI, and screenshots)
         run: ./gradlew testDebugUnitTest --console=plain
+      # Without the release key, Gradle signs with the runner's debug key, which is new on
+      # every runner: each APK then has a different signature and won't install over the
+      # last one. Pushes must have the key; pull requests (no secrets) fall back to debug.
+      - name: Release keystore
+        env:
+          KEYSTORE_BASE64: ${{ secrets.PIXELG_KEYSTORE_BASE64 }}
+          PIXELG_KEYSTORE_PASSWORD: ${{ secrets.PIXELG_KEYSTORE_PASSWORD }}
+          PIXELG_KEY_ALIAS: ${{ secrets.PIXELG_KEY_ALIAS }}
+          PIXELG_KEY_PASSWORD: ${{ secrets.PIXELG_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            if [ "${{ github.event_name }}" = pull_request ]; then
+              echo "::warning::No release keystore; the APK is signed with a throwaway debug key"
+              exit 0
+            fi
+            echo "::error::Secret PIXELG_KEYSTORE_BASE64 is missing; the APK would not install over earlier ones"
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/pixelg.keystore"
+          {
+            echo "PIXELG_KEYSTORE_FILE=$RUNNER_TEMP/pixelg.keystore"
+            echo "PIXELG_KEYSTORE_PASSWORD=$PIXELG_KEYSTORE_PASSWORD"
+            echo "PIXELG_KEY_ALIAS=$PIXELG_KEY_ALIAS"
+            echo "PIXELG_KEY_PASSWORD=${PIXELG_KEY_PASSWORD:-$PIXELG_KEYSTORE_PASSWORD}"
+          } >> "$GITHUB_ENV"
       - name: Release APK
         run: ./gradlew assembleRelease --console=plain
+      - name: The APK is signed with the release key
+        if: env.PIXELG_KEYSTORE_FILE != ''
+        run: |
+          apksigner=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
+          "$apksigner" verify --print-certs app/build/outputs/apk/release/*.apk | grep -i "certificate SHA-256"
       # Android won't System.loadLibrary a library with static (initial-exec) TLS: the app
       # would close at launch. Unit tests run the host build, so they can't catch it.
       - name: The engine loads on Android (no static TLS)
