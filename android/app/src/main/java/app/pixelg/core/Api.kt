@@ -46,7 +46,10 @@ object Api {
         raw(method, uri, body)
     }
 
-    fun q(value: String): String = URLEncoder.encode(value, "UTF-8")
+    // Spaces as %20, not "+": Navigation decodes route arguments with Uri.decode, which
+    // leaves "+" as is, so Explore groups like "New York" or "Canon EOS R6" asked for
+    // "New+York" and found nothing. Query strings read %20 as a space just the same.
+    fun q(value: String): String = URLEncoder.encode(value, "UTF-8").replace("+", "%20")
 
     fun obj(vararg pairs: Pair<String, Any?>): JsonObject = buildJsonObject {
         for ((key, value) in pairs) {

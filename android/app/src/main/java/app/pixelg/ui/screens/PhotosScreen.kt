@@ -44,8 +44,10 @@ import app.pixelg.ui.AppBar
 import app.pixelg.ui.LocalNav
 import app.pixelg.ui.components.ColumnsButton
 import app.pixelg.ui.components.EmptyState
+import app.pixelg.ui.components.FastScroller
 import app.pixelg.ui.components.FolderCard
 import app.pixelg.ui.formatCount
+import app.pixelg.ui.formatMonth
 import kotlinx.coroutines.flow.distinctUntilChanged
 
 private val sorts = listOf("newest" to "Newest first", "oldest" to "Oldest first", "name" to "Name", "count" to "Most items")
@@ -138,6 +140,16 @@ fun PhotosScreen() {
                         album.name, formatCount(album.count, "item"), album.cover, album.hidden,
                         onClick = { nav.navigate("folder/${album.id}") },
                     )
+                }
+            }
+            // The same drag handle as the photo grids, labelled by what the list is sorted on.
+            FastScroller(state, Modifier.align(Alignment.TopEnd)) { index ->
+                albums.getOrNull(index)?.let { album ->
+                    when (sort) {
+                        "name" -> album.name.take(1).uppercase()
+                        "count" -> formatCount(album.count, "item")
+                        else -> album.latestTakenAt?.let(::formatMonth)
+                    }
                 }
             }
             if (total == 0L) {

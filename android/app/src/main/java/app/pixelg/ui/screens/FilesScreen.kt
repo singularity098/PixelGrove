@@ -104,7 +104,7 @@ fun FilesScreen() {
                 if (found != null) {
                     items(found, key = { "hit-${it.id}" }) { hit ->
                         Row(
-                            Modifier.fillMaxWidth().clickable { nav.navigate("folder/${hit.id}") }.padding(horizontal = 16.dp, vertical = 10.dp),
+                            Modifier.fillMaxWidth().clickable { nav.navigate("folder/${hit.id}?tree=true") }.padding(horizontal = 16.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Icon(Icons.Outlined.Folder, null)
@@ -119,7 +119,7 @@ fun FilesScreen() {
                         Row(
                             Modifier
                                 .fillMaxWidth()
-                                .clickable { nav.navigate("folder/${folder.id}") }
+                                .clickable { nav.navigate("folder/${folder.id}?tree=true") }
                                 .padding(start = (8 + depth * 20).dp, end = 16.dp, top = 4.dp, bottom = 4.dp)
                                 .then(if (folder.hidden) Modifier.alpha(0.5f) else Modifier),
                             verticalAlignment = Alignment.CenterVertically,

@@ -25,8 +25,10 @@ cache). Plus, on the phone:
   item. **Move to trash**, or **Delete permanently** (skipping the trash).
 - **Long-press** a photo to select several: copy, move, trash or delete them together.
 - **Pull down** on Photos or a folder to rescan it right away.
-- Subfolders as a small strip that scrolls sideways, as in the web UI; folder names can
-  go over the covers (Settings → Display).
+- Subfolders as a small strip that scrolls sideways, as in the web UI (folder boxes when
+  opened from File View); folder names can go over the covers (Settings → Display).
+- A drag handle on the right of Photos and the photo grids for long lists. On the map,
+  sideways drags pan the map; open the menu with its button.
 - Animated GIFs and WebPs play in the viewer, and in grids too (Settings → Display; on
   by default). Videos stay still in grids: decoding several at once would drain the
   battery and run out of hardware decoders.

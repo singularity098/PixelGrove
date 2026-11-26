@@ -1,5 +1,8 @@
 package app.pixelg.thumbs
 
+import android.app.ActivityManager
+import android.content.ComponentCallbacks2
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.ImageDecoder
 import android.media.ThumbnailUtils
@@ -34,8 +37,31 @@ object Thumbnails {
     const val THUMB = "thumb"
     const val LARGE = "large"
 
-    private val memory = object : LruCache<String, ImageBitmap>(96 * 1024 * 1024) {
+    // Sized from the phone's RAM (see [init]); 96 MB held only ~140 grid thumbnails, so
+    // scrolling a few screens away and back meant decoding everything again.
+    private var memory = cache(96)
+
+    private fun cache(mb: Int) = object : LruCache<String, ImageBitmap>(mb * 1024 * 1024) {
         override fun sizeOf(key: String, value: ImageBitmap) = value.width * value.height * 4
+    }
+
+    /** About 1/32 of the RAM: 128 MB on a 4 GB phone, 256 MB on 8 GB (at most 384 MB). */
+    fun init(context: Context) {
+        val am = context.getSystemService(ActivityManager::class.java) ?: return
+        if (am.isLowRamDevice) return
+        val info = ActivityManager.MemoryInfo().also { am.getMemoryInfo(it) }
+        memory = cache((info.totalMem / 32 / (1024 * 1024)).toInt().coerceIn(96, 384))
+    }
+
+    /** Gives memory back when the system asks (in the background, or when it runs low). */
+    fun trim(level: Int) {
+        @Suppress("DEPRECATION")
+        when {
+            level >= ComponentCallbacks2.TRIM_MEMORY_COMPLETE -> memory.evictAll()
+            level >= ComponentCallbacks2.TRIM_MEMORY_BACKGROUND ||
+                level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW ||
+                level == ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL -> memory.trimToSize(memory.maxSize() / 4)
+        }
     }
 
     // A few at a time: each holds a decoder's working memory, and the engine has its

@@ -120,5 +120,10 @@ class ScreenshotTest {
             settle(3000)
             shot(name)
         }
+        // A folder opened from File View shows its subfolders as boxes.
+        val top = runBlocking { Library.treeTops().first() }
+        compose.onAllNodes(hasText(top.name))[0].performClick()
+        settle(3000)
+        shot("files-folder")
     }
 }

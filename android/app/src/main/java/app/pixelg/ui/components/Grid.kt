@@ -83,6 +83,7 @@ import app.pixelg.thumbs.Thumbnails
 import app.pixelg.ui.formatDay
 import app.pixelg.ui.formatDuration
 import app.pixelg.ui.localDate
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
@@ -249,6 +250,29 @@ fun MediaGrid(
             last >= info.totalItemsCount - columns * 6
         }.distinctUntilChanged().collect { nearEnd ->
             if (nearEnd && paged.more && !paged.loading) paged.loadMore()
+        }
+    }
+    // Once scrolling pauses, decodes the thumbnails of the screenful past each end
+    // (ahead first), so tiles are already there when they scroll in or back in.
+    LaunchedEffect(paged, state) {
+        snapshotFlow {
+            val visible = state.layoutInfo.visibleItemsInfo
+            val first = visible.firstOrNull { it.contentType == "tile" }?.key as? Long
+            val last = visible.lastOrNull { it.contentType == "tile" }?.key as? Long
+            first to last
+        }.distinctUntilChanged().collectLatest { (first, last) ->
+            if (first == null || last == null) return@collectLatest
+            delay(150)
+            val list = items.toList()
+            val from = list.indexOfFirst { it.id == first }
+            val to = list.indexOfFirst { it.id == last }
+            if (from < 0 || to < from) return@collectLatest
+            val screen = to - from + 1
+            val order = (1..screen).flatMap { listOf(to + it, from - it) }.filter { it in list.indices }
+            for (i in order) {
+                val item = list[i]
+                Thumbnails.load(item.id, item.kind, Thumbnails.THUMB, item.trash, item.v)
+            }
         }
     }
     Box(modifier.fillMaxSize()) {

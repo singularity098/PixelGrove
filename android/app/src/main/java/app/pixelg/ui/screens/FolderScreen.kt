@@ -2,6 +2,8 @@ package app.pixelg.ui.screens
 
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.rememberScrollState
@@ -41,6 +43,7 @@ import app.pixelg.ui.LocalNav
 import app.pixelg.ui.ShowHidden
 import app.pixelg.ui.components.ColumnsButton
 import app.pixelg.ui.components.EmptyState
+import app.pixelg.ui.components.FolderCard
 import app.pixelg.ui.components.MediaGrid
 import app.pixelg.ui.components.SelectionBar
 import app.pixelg.ui.components.SubfolderStrip
@@ -52,12 +55,13 @@ import app.pixelg.ui.viewer.ViewerSession
 import kotlinx.coroutines.launch
 
 /**
- * A folder: its subfolders as a sideways strip above its photos and videos, newest
- * first. Long-press a photo to select; pull down to rescan.
+ * A folder: its subfolders above its photos and videos, newest first. From Photos they
+ * are a sideways strip (the photos stay near the top); from File View ([tree]) they are
+ * folder boxes like the Photos page. Long-press a photo to select; pull down to rescan.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FolderScreen(id: Long) {
+fun FolderScreen(id: Long, tree: Boolean = false) {
     val nav = LocalNav.current
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -75,6 +79,12 @@ fun FolderScreen(id: Long) {
 
     val mediaColumns = Prefs.mediaColumns
     val f = folder
+    val boxes = tree && f != null && f.subfolders.isNotEmpty()
+    // Folder boxes use the Photos page's column count, photos their own: a grid fine
+    // enough for both, with each spanning several cells.
+    val folderColumns = Prefs.albumColumns
+    val gridColumns = if (boxes) lcm(folderColumns, mediaColumns) else mediaColumns
+    fun go(target: Long) = nav.navigate(if (tree) "folder/$target?tree=true" else "folder/$target")
 
     Scaffold(topBar = {
         if (selection.active) {
@@ -136,6 +146,7 @@ fun FolderScreen(id: Long) {
         MediaGrid(
             paged = paged,
             columns = mediaColumns,
+            gridColumns = gridColumns,
             selection = selection,
             onOpen = { ViewerSession.open(nav, paged, it, folderId = id) },
             empty = {
@@ -152,16 +163,25 @@ fun FolderScreen(id: Long) {
                             folder.breadcrumbs.forEachIndexed { i, crumb ->
                                 if (i > 0) Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                 TextButton(
-                                    onClick = { if (crumb.id != id) nav.navigate("folder/${crumb.id}") },
+                                    onClick = { if (crumb.id != id) go(crumb.id) },
                                     enabled = crumb.id != id,
                                 ) { Text(crumb.name) }
                             }
                         }
                     }
                 }
-                if (folder.subfolders.isNotEmpty()) {
+                if (boxes) {
+                    val span = gridColumns / folderColumns
+                    items(folder.subfolders.size, key = { "sub-${folder.subfolders[it].id}" }, span = { GridItemSpan(span) }) { i ->
+                        val sub = folder.subfolders[i]
+                        FolderCard(sub.name, formatCount(sub.count, "item"), sub.cover, sub.hidden, onClick = { go(sub.id) })
+                    }
+                    if (paged.items.isNotEmpty()) {
+                        item(key = "subfolders-end", span = { GridItemSpan(maxLineSpan) }) { Spacer(Modifier.height(8.dp)) }
+                    }
+                } else if (folder.subfolders.isNotEmpty()) {
                     item(key = "subfolders", span = { GridItemSpan(maxLineSpan) }) {
-                        SubfolderStrip(folder.subfolders) { nav.navigate("folder/${it.id}") }
+                        SubfolderStrip(folder.subfolders) { go(it.id) }
                     }
                 }
             }
@@ -172,3 +192,7 @@ fun FolderScreen(id: Long) {
         }
     }
 }
+
+private tailrec fun gcd(a: Int, b: Int): Int = if (b == 0) a else gcd(b, a % b)
+
+private fun lcm(a: Int, b: Int) = a / gcd(a, b) * b

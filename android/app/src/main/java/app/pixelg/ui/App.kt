@@ -126,7 +126,9 @@ fun PixelGApp() {
     ) {
         ModalNavigationDrawer(
             drawerState = drawer,
-            gesturesEnabled = !fullScreen,
+            // On the map a sideways drag pans the map: the drawer's own swipe would catch
+            // it first (the map is a View inside Compose). The menu button still opens it.
+            gesturesEnabled = !fullScreen && (route != "map" || drawer.isOpen),
             drawerContent = {
                 DrawerContent(route) { target ->
                     scope.launch { drawer.close() }
@@ -142,8 +144,14 @@ fun PixelGApp() {
         ) {
             NavHost(nav, startDestination = "photos") {
                 composable("photos") { PhotosScreen() }
-                composable("folder/{id}", listOf(navArgument("id") { type = NavType.LongType })) {
-                    FolderScreen(it.arguments!!.getLong("id"))
+                composable(
+                    "folder/{id}?tree={tree}",
+                    listOf(
+                        navArgument("id") { type = NavType.LongType },
+                        navArgument("tree") { type = NavType.BoolType; defaultValue = false },
+                    ),
+                ) {
+                    FolderScreen(it.arguments!!.getLong("id"), tree = it.arguments!!.getBoolean("tree"))
                 }
                 composable("timeline") { TimelineScreen() }
                 composable("explore") { ExploreScreen() }
