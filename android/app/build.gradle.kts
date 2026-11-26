@@ -12,6 +12,17 @@ plugins {
 val abis = (findProperty("pixelg.abis") as String? ?: "arm64-v8a,x86_64").split(",").map { it.trim() }
 val rustOut = layout.buildDirectory.dir("rustJniLibs")
 
+// The version: PIXELG_VERSION_NAME when set (a release), otherwise the server crate's
+// version and the commit built, so every APK says what it is in its name and in Settings.
+val cargoVersion = Regex("""(?m)^version\s*=\s*"([^"]+)"""")
+    .find(rootProject.file("../Cargo.toml").readText())!!.groupValues[1]
+val commit: String = runCatching {
+    val p = ProcessBuilder("git", "-C", rootDir.path, "rev-parse", "--short", "HEAD").start()
+    val out = p.inputStream.bufferedReader().readText().trim()
+    if (p.waitFor() == 0) out else ""
+}.getOrDefault("")
+val appVersion = System.getenv("PIXELG_VERSION_NAME") ?: listOf(cargoVersion, commit).filter { it.isNotEmpty() }.joinToString("-")
+
 // Release signing: from keystore.properties (or PIXELG_KEYSTORE_* environment variables);
 // without one, release builds are signed with the debug key so they still install.
 val keystore = Properties().apply {
@@ -34,7 +45,7 @@ android {
         minSdk = 30
         targetSdk = 36
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = appVersion
         ndk { abiFilters += abis }
     }
 
@@ -72,6 +83,16 @@ android {
     }
 
     sourceSets["main"].jniLibs.srcDir(rustOut)
+
+    // PixelG-<version>.apk (and PixelG-<version>-debug.apk) instead of app-release.apk.
+    applicationVariants.all {
+        val variant = this
+        val type = if (variant.buildType.name == "release") "" else "-${variant.buildType.name}"
+        outputs.all {
+            (this as com.android.build.gradle.internal.api.BaseVariantOutputImpl).outputFileName =
+                "PixelG-${variant.versionName}$type.apk"
+        }
+    }
 
     packaging {
         jniLibs.useLegacyPackaging = false

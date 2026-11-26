@@ -72,7 +72,8 @@ cargo install cargo-ndk
 cd android && ./gradlew assembleRelease
 ```
 
-The APK is in `app/build/outputs/apk/release/`. Gradle builds the engine with cargo-ndk
+The APK is `app/build/outputs/apk/release/PixelG-<version>.apk`, the version being the
+server crate's and the commit (`PixelG-0.1.0-f5aa103.apk`). Gradle builds the engine with cargo-ndk
 first (`-Ppixelg.abis=arm64-v8a` builds for phones only, which is faster;
 `-Ppixelg.skipRust` reuses the last build). Release builds are signed with
 `keystore.properties` (`storeFile`, `storePassword`, `keyAlias`, `keyPassword`) or the

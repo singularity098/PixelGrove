@@ -69,12 +69,15 @@ jobs:
             echo "PIXELG_KEY_PASSWORD=${PIXELG_KEY_PASSWORD:-$PIXELG_KEYSTORE_PASSWORD}"
           } >> "$GITHUB_ENV"
       - name: Release APK
-        run: ./gradlew assembleRelease --console=plain
+        run: |
+          ./gradlew assembleRelease --console=plain
+          # PixelG-<version>.apk: the artifact is named after it.
+          echo "APK=$(basename app/build/outputs/apk/release/PixelG-*.apk)" >> "$GITHUB_ENV"
       - name: The APK is signed with the release key
         if: env.PIXELG_KEYSTORE_FILE != ''
         run: |
           apksigner=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
-          "$apksigner" verify --print-certs app/build/outputs/apk/release/*.apk | grep -i "certificate SHA-256"
+          "$apksigner" verify --print-certs app/build/outputs/apk/release/PixelG-*.apk | grep -i "certificate SHA-256"
       # Android won't System.loadLibrary a library with static (initial-exec) TLS: the app
       # would close at launch. Unit tests run the host build, so they can't catch it.
       - name: The engine loads on Android (no static TLS)
@@ -86,8 +89,10 @@ jobs:
           done
       - uses: actions/upload-artifact@v5
         with:
-          name: pixelg-apk
-          path: android/app/build/outputs/apk/release/*.apk
+          name: ${{ env.APK }}
+          path: android/app/build/outputs/apk/release/${{ env.APK }}
+          if-no-files-found: error
+          compression-level: 0
       - uses: actions/upload-artifact@v5
         if: always()
         with:
