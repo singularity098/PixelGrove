@@ -36,6 +36,8 @@ import app.pixelg.ui.components.EmptyState
 import app.pixelg.ui.components.MediaGrid
 import app.pixelg.ui.components.PageResult
 import app.pixelg.ui.components.PagedMedia
+import app.pixelg.ui.components.SelectionBar
+import app.pixelg.ui.components.rememberSelection
 import app.pixelg.ui.formatMonth
 import app.pixelg.ui.formatMonthKey
 import app.pixelg.ui.viewer.ViewerSession
@@ -64,6 +66,7 @@ fun TimelineScreen() {
     val state = remember(start) { androidx.compose.foundation.lazy.grid.LazyGridState() }
     var months by remember { mutableStateOf<List<Month>>(emptyList()) }
     var picking by remember { mutableStateOf(false) }
+    val selection = rememberSelection()
 
     LaunchedEffect(Engine.version) {
         runCatching { months = Library.months() }
@@ -72,18 +75,23 @@ fun TimelineScreen() {
 
     val first = paged.items.getOrNull(state.firstVisibleItemIndex.coerceAtMost(paged.items.size - 1).coerceAtLeast(0))
     Scaffold(topBar = {
-        AppBar("Timeline", subtitle = first?.let { formatMonth(it.takenAt) }, actions = {
-            if (months.isNotEmpty()) {
-                IconButton(onClick = { picking = true }) { Icon(Icons.Outlined.DateRange, "Jump to month") }
-            }
-            ColumnsButton(Prefs.mediaColumns, listOf(2, 3, 4, 5), Prefs::setMediaColumns)
-        })
+        if (selection.active) {
+            SelectionBar(selection, paged)
+        } else {
+            AppBar("Timeline", subtitle = first?.let { formatMonth(it.takenAt) }, actions = {
+                if (months.isNotEmpty()) {
+                    IconButton(onClick = { picking = true }) { Icon(Icons.Outlined.DateRange, "Jump to month") }
+                }
+                ColumnsButton(Prefs.mediaColumns, listOf(2, 3, 4, 5), Prefs::setMediaColumns)
+            })
+        }
     }) { padding ->
         MediaGrid(
             paged = paged,
             columns = Prefs.mediaColumns,
             state = state,
             groupByDay = true,
+            selection = selection,
             modifier = Modifier.padding(padding),
             onOpen = { ViewerSession.open(nav, paged, it) },
             empty = { EmptyState(Icons.Outlined.CalendarMonth, "No photos yet") },

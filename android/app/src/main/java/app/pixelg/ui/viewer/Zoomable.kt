@@ -1,6 +1,10 @@
 package app.pixelg.ui.viewer
 
+import android.graphics.ImageDecoder
+import android.graphics.drawable.AnimatedImageDrawable
+import android.graphics.drawable.Drawable
 import android.net.Uri
+import android.widget.ImageView
 import androidx.annotation.OptIn
 import androidx.compose.animation.core.animate
 import androidx.compose.foundation.Image
@@ -40,8 +44,12 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import app.pixelg.core.Native
 import app.pixelg.thumbs.Thumbnails
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
+import kotlin.math.max
+import kotlin.math.min
 
 private const val MAX_SCALE = 8f
 
@@ -55,6 +63,8 @@ fun ZoomableImage(
     item: app.pixelg.core.MediaItem,
     onTap: () -> Unit,
     onZoomed: (Boolean) -> Unit,
+    /** A playing animation (GIF, animated WebP) shown in place of the still preview. */
+    animation: Drawable? = null,
 ) {
     val scope = rememberCoroutineScope()
     var scale by remember { mutableFloatStateOf(1f) }
@@ -69,7 +79,7 @@ fun ZoomableImage(
     var original by remember(item.id) { mutableStateOf<ImageBitmap?>(null) }
     val wantOriginal = scale > 1.6f
     LaunchedEffect(wantOriginal, item.id) {
-        if (wantOriginal && original == null) {
+        if (wantOriginal && original == null && animation == null) {
             Native.path(item.id, item.trash)?.let { original = Thumbnails.original(it) }
         }
     }
@@ -129,19 +139,69 @@ fun ZoomableImage(
             },
         contentAlignment = Alignment.Center,
     ) {
-        val bitmap = (if (wantOriginal) original else null) ?: large ?: thumb
-        bitmap?.let {
-            Image(
-                it, contentDescription = item.name, contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize().graphicsLayer {
-                    scaleX = scale
-                    scaleY = scale
-                    translationX = offset.x
-                    translationY = offset.y
-                },
+        val layer = Modifier.fillMaxSize().graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+            translationX = offset.x
+            translationY = offset.y
+        }
+        if (animation != null) {
+            AndroidView(
+                factory = { ImageView(it).apply { scaleType = ImageView.ScaleType.FIT_CENTER } },
+                update = { it.setImageDrawable(animation) },
+                modifier = layer,
             )
+        } else {
+            val bitmap = (if (wantOriginal) original else null) ?: large ?: thumb
+            bitmap?.let { Image(it, contentDescription = item.name, contentScale = ContentScale.Fit, modifier = layer) }
         }
     }
+}
+
+/** GIFs and WebPs may be animated; Android's decoder tells which really are. */
+fun isAnimatable(name: String) = name.substringAfterLast('.', "").lowercase() in setOf("gif", "webp")
+
+/**
+ * Decodes an animated GIF or WebP for playing, scaled so its longer side is at most
+ * `maxEdge` (or, with `cover`, so its shorter side is about that: grid tiles). Returns
+ * null for stills, and for files Android can't decode.
+ */
+suspend fun loadAnimation(path: String, maxEdge: Int, cover: Boolean = false): AnimatedImageDrawable? =
+    withContext(Dispatchers.IO) {
+        runCatching {
+            ImageDecoder.decodeDrawable(ImageDecoder.createSource(File(path))) { decoder, info, _ ->
+                val (w, h) = info.size.width to info.size.height
+                val edge = if (cover) min(w, h) else max(w, h)
+                val scale = min(1.0, maxEdge.toDouble() / edge)
+                if (scale < 1.0) decoder.setTargetSize(max(1, (w * scale).toInt()), max(1, (h * scale).toInt()))
+            } as? AnimatedImageDrawable
+        }.getOrNull()
+    }
+
+/** Plays an animation for as long as it's on screen. */
+@Composable
+fun rememberAnimation(item: app.pixelg.core.MediaItem, maxEdge: Int, cover: Boolean = false): AnimatedImageDrawable? {
+    val animation by produceState<AnimatedImageDrawable?>(null, item.id, item.v) {
+        value = Native.path(item.id, item.trash)?.let { loadAnimation(it, maxEdge, cover) }
+    }
+    DisposableEffect(animation) {
+        animation?.apply { repeatCount = AnimatedImageDrawable.REPEAT_INFINITE; start() }
+        onDispose { animation?.stop() }
+    }
+    return animation
+}
+
+/**
+ * An animated GIF or WebP in the viewer: the still preview first, then the animation
+ * once decoded, zoomable like any photo. (The previews themselves are stills.)
+ */
+@Composable
+fun AnimatedImage(
+    item: app.pixelg.core.MediaItem,
+    onTap: () -> Unit,
+    onZoomed: (Boolean) -> Unit,
+) {
+    ZoomableImage(item, onTap, onZoomed, animation = rememberAnimation(item, 2048))
 }
 
 /**

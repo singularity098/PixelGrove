@@ -69,6 +69,7 @@ import app.pixelg.core.Engine
 import app.pixelg.core.Files
 import app.pixelg.core.Library
 import app.pixelg.core.Volume
+import app.pixelg.ui.components.LibraryWritable
 import app.pixelg.ui.screens.ExploreItemsScreen
 import app.pixelg.ui.screens.ExploreScreen
 import app.pixelg.ui.screens.FavoritesScreen
@@ -116,6 +117,7 @@ fun PixelGApp() {
 
     LaunchedEffect(Unit) {
         runCatching { ShowHidden.on = Library.me().showHidden }
+        LibraryWritable.refresh()
     }
 
     CompositionLocalProvider(

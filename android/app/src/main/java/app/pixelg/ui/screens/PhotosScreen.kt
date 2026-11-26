@@ -13,6 +13,11 @@ import androidx.compose.material.icons.automirrored.outlined.Sort
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -49,6 +54,7 @@ private val sorts = listOf("newest" to "Newest first", "oldest" to "Oldest first
  * Photos: every folder with media, Android style, newest first by default; each shows
  * its newest item as the cover.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PhotosScreen() {
     val nav = LocalNav.current
@@ -59,6 +65,8 @@ fun PhotosScreen() {
     val sort = Prefs.albumSort
     val state = rememberLazyGridState()
     var scanning by rememberSaveable { mutableStateOf(false) }
+    var refreshing by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     suspend fun load(reset: Boolean) {
         if (loading) return
@@ -100,7 +108,26 @@ fun PhotosScreen() {
             ColumnsButton(Prefs.albumColumns, listOf(2, 3, 4), Prefs::setAlbumColumns)
         })
     }) { padding ->
-        Box(Modifier.padding(padding).fillMaxSize()) {
+        // Pull down to rescan every media folder now, then reload.
+        PullToRefreshBox(
+            isRefreshing = refreshing,
+            onRefresh = {
+                refreshing = true
+                scope.launch {
+                    runCatching {
+                        Library.rescanAll()
+                        val started = System.currentTimeMillis()
+                        do {
+                            delay(500)
+                        } while (Library.status().scanning && System.currentTimeMillis() - started < 120_000)
+                    }
+                    load(reset = true)
+                    Engine.changed()
+                    refreshing = false
+                }
+            },
+            modifier = Modifier.padding(padding).fillMaxSize(),
+        ) {
             LazyVerticalGrid(
                 columns = GridCells.Fixed(Prefs.albumColumns),
                 state = state,

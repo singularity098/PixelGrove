@@ -55,6 +55,8 @@ import app.pixelg.ui.components.FolderCard
 import app.pixelg.ui.components.MediaGrid
 import app.pixelg.ui.components.PageResult
 import app.pixelg.ui.components.PagedMedia
+import app.pixelg.ui.components.SelectionBar
+import app.pixelg.ui.components.rememberSelection
 import app.pixelg.ui.components.offsetPaging
 import app.pixelg.ui.formatCount
 import app.pixelg.ui.viewer.ViewerSession
@@ -65,14 +67,20 @@ import kotlinx.coroutines.launch
 fun FavoritesScreen() {
     val nav = LocalNav.current
     val paged = remember { PagedMedia(fetch = offsetPaging { o, l -> Library.favorites(o, l) }) }
+    val selection = rememberSelection()
     LaunchedEffect(Engine.version) { if (paged.loaded) paged.reload() }
     Scaffold(topBar = {
-        AppBar("Favorites", subtitle = if (paged.total >= 0) formatCount(paged.total.toLong(), "item") else null, actions = {
-            ColumnsButton(Prefs.mediaColumns, listOf(2, 3, 4, 5), Prefs::setMediaColumns)
-        })
+        if (selection.active) {
+            SelectionBar(selection, paged)
+        } else {
+            AppBar("Favorites", subtitle = if (paged.total >= 0) formatCount(paged.total.toLong(), "item") else null, actions = {
+                ColumnsButton(Prefs.mediaColumns, listOf(2, 3, 4, 5), Prefs::setMediaColumns)
+            })
+        }
     }) { padding ->
         MediaGrid(
             paged, Prefs.mediaColumns, { ViewerSession.open(nav, paged, it) }, Modifier.padding(padding),
+            selection = selection,
             empty = { EmptyState(Icons.Outlined.FavoriteBorder, "No favorites yet", "Tap the heart on a photo to add it here.") },
         )
     }
@@ -153,7 +161,12 @@ fun SearchScreen() {
     }
     LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
 
+    val selection = rememberSelection()
     Scaffold(topBar = {
+        val selecting = paged
+        if (selection.active && selecting != null) {
+            SelectionBar(selection, selecting)
+        } else {
         TopAppBar(
             navigationIcon = {
                 IconButton(onClick = { nav.popBackStack() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") }
@@ -175,6 +188,7 @@ fun SearchScreen() {
                 )
             },
         )
+        }
     }) { padding ->
         val list = paged
         if (list == null) {
@@ -184,6 +198,7 @@ fun SearchScreen() {
         } else {
             MediaGrid(
                 list, Prefs.mediaColumns, { ViewerSession.open(nav, list, it) }, Modifier.padding(padding),
+                selection = selection,
                 empty = { if (folders.isEmpty()) EmptyState(Icons.Outlined.Search, "Nothing found") },
             ) {
                 if (folders.isNotEmpty()) {

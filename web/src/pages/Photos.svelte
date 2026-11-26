@@ -1,7 +1,12 @@
 <script lang="ts">
+  import Icon from '../components/Icon.svelte';
+  import PullToRefresh from '../components/PullToRefresh.svelte';
   import Thumb from '../components/Thumb.svelte';
+  import { get, post } from '../lib/api';
+  import { display } from '../lib/display.svelte';
   import { formatDate, PagedList, type Album } from '../lib/media.svelte';
   import { link, onVisible } from '../lib/router.svelte';
+  import { session } from '../lib/session.svelte';
 
   const SORTS = [
     ['newest', 'Newest first'],
@@ -26,6 +31,33 @@
     }
   }
 
+  const isAdmin = $derived(session.current.status === 'signed-in' && session.current.user.role === 'admin');
+
+  // Rescan (admins): a full scan of every media folder, then the list reloads. Others
+  // just reload; the server rescans on its own schedule and watches for changes.
+  let rescanning = $state(false);
+  async function refresh() {
+    if (rescanning) return;
+    rescanning = true;
+    try {
+      if (isAdmin) {
+        await post('/library/rescan');
+        const started = Date.now();
+        // Wait for the scan to finish (polled), up to a couple of minutes.
+        while (Date.now() - started < 120_000) {
+          await new Promise((r) => setTimeout(r, 1000));
+          const status = await get<{ scanning: boolean }>('/library/status');
+          if (!status.scanning) break;
+        }
+      }
+      await albums.reset();
+    } catch {
+      // The list shows its own error if reloading failed.
+    } finally {
+      rescanning = false;
+    }
+  }
+
   function changeSort(event: Event) {
     // Read the choice from the menu: the binding may update after this handler.
     sort = (event.currentTarget as HTMLSelectElement).value as Sort;
@@ -44,29 +76,48 @@
 <section class="page wide">
   <div class="heading">
     <h2>Photos</h2>
-    <select class="sort" aria-label="Sort folders" value={sort} onchange={changeSort}>
-      {#each SORTS as [id, label] (id)}
-        <option value={id}>{label}</option>
-      {/each}
-    </select>
+    <div class="tools">
+      {#if isAdmin}
+        <button class="ghost rescan" onclick={refresh} disabled={rescanning} title="Rescan every media folder now">
+          <Icon name="refresh" size={16} /><span>{rescanning ? 'Rescanning…' : 'Rescan'}</span>
+        </button>
+      {/if}
+      <select class="sort" aria-label="Sort folders" value={sort} onchange={changeSort}>
+        {#each SORTS as [id, label] (id)}
+          <option value={id}>{label}</option>
+        {/each}
+      </select>
+    </div>
   </div>
   {#if albums.total === 0}
     <p class="muted">No photos yet. Add folders under <code>/media</code> and they'll appear here once scanned.</p>
   {/if}
-  <div class="albums">
+  <div class="albums" class:overlay={display.namesOnCovers}>
     {#each albums.items as album (album.id)}
       <a class="album" class:hidden-item={album.hidden} href="/folder/{album.id}" onclick={link} title={album.path}>
-        <div class="cover"><Thumb media={album.cover} /></div>
-        <div class="name">{#if album.hidden}<span class="tag">Hidden</span>{/if}{album.name}</div>
-        <div class="meta muted small">
-          {album.count.toLocaleString()} · {formatDate(album.latest_taken_at)}
+        <div class="cover">
+          <Thumb media={album.cover} />
+          {#if display.namesOnCovers}
+            <div class="caption">
+              <div class="name">{#if album.hidden}<span class="tag">Hidden</span>{/if}{album.name}</div>
+              <div class="meta small">{album.count.toLocaleString()}</div>
+            </div>
+          {/if}
         </div>
+        {#if !display.namesOnCovers}
+          <div class="name">{#if album.hidden}<span class="tag">Hidden</span>{/if}{album.name}</div>
+          <div class="meta muted small">
+            {album.count.toLocaleString()} · {formatDate(album.latest_taken_at)}
+          </div>
+        {/if}
       </a>
     {/each}
   </div>
   {#if albums.error}<p class="error">{albums.error}</p>{/if}
   <div use:onVisible={() => albums.more()}></div>
 </section>
+
+<PullToRefresh onrefresh={refresh} />
 
 <style>
   .heading {
@@ -104,11 +155,50 @@
     min-width: 0;
   }
 
+  .tools {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .rescan {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+
   .cover {
+    position: relative;
     aspect-ratio: 1;
-    border-radius: 14px;
     overflow: hidden;
     background: var(--surface-2);
+  }
+
+  .caption {
+    position: absolute;
+    inset: auto 0 0;
+    padding: 28px 10px 8px;
+    color: #fff;
+    background: linear-gradient(transparent, rgb(0 0 0 / 0.75));
+    text-shadow: 0 1px 2px rgb(0 0 0 / 0.6);
+    pointer-events: none;
+  }
+
+  .caption .name {
+    margin-top: 0;
+  }
+
+  .caption .meta {
+    opacity: 0.85;
+  }
+
+  .caption .tag {
+    background: rgb(255 255 255 / 0.2);
+    color: #fff;
+  }
+
+  .overlay {
+    gap: 10px;
   }
 
   .hidden-item .cover {
@@ -151,13 +241,17 @@
       gap: 14px 8px;
     }
 
-    .cover {
-      border-radius: 10px;
-    }
-
     .name {
       margin-top: 6px;
       font-size: 0.9rem;
+    }
+
+    .overlay {
+      gap: 4px;
+    }
+
+    .rescan span {
+      display: none;
     }
 
     .meta {

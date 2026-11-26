@@ -27,6 +27,8 @@ object Prefs {
         slideVideos = prefs.getBoolean("slideVideos", true)
         slideSubfolders = prefs.getBoolean("slideSubfolders", false)
         askedLocation = prefs.getBoolean("askedLocation", false)
+        namesOnCovers = prefs.getBoolean("namesOnCovers", false)
+        animateGrid = prefs.getBoolean("animateGrid", true)
     }
 
     @set:JvmName("assignTheme")
@@ -56,6 +58,14 @@ object Prefs {
     @set:JvmName("assignSlideSubfolders")
     var slideSubfolders by mutableStateOf(false)
         private set
+    /** Folder names written over the bottom of their covers instead of underneath. */
+    @set:JvmName("assignNamesOnCovers")
+    var namesOnCovers by mutableStateOf(false)
+        private set
+    /** Animated GIFs and WebPs play in grids, not just in the viewer. */
+    @set:JvmName("assignAnimateGrid")
+    var animateGrid by mutableStateOf(true)
+        private set
 
     fun setTheme(value: String) { theme = value; prefs.edit().putString("theme", value).apply() }
     fun setAlbumColumns(value: Int) { albumColumns = value; prefs.edit().putInt("albumColumns", value).apply() }
@@ -66,6 +76,8 @@ object Prefs {
     fun setSlideShuffle(value: Boolean) { slideShuffle = value; prefs.edit().putBoolean("slideShuffle", value).apply() }
     fun setSlideVideos(value: Boolean) { slideVideos = value; prefs.edit().putBoolean("slideVideos", value).apply() }
     fun setSlideSubfolders(value: Boolean) { slideSubfolders = value; prefs.edit().putBoolean("slideSubfolders", value).apply() }
+    fun setNamesOnCovers(value: Boolean) { namesOnCovers = value; prefs.edit().putBoolean("namesOnCovers", value).apply() }
+    fun setAnimateGrid(value: Boolean) { animateGrid = value; prefs.edit().putBoolean("animateGrid", value).apply() }
 
     /** MediaStore bookkeeping for [MediaSync]. */
     var syncedGeneration: Long

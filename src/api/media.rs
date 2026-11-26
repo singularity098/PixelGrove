@@ -123,6 +123,9 @@ pub struct MediaDetail {
     /// (in a hidden folder).
     #[serde(skip_serializing_if = "Option::is_none")]
     hidden: Option<&'static str>,
+    /// Whether its folder can be changed (move, trash, delete); false on read-only
+    /// mounts.
+    writable: bool,
     v: i64,
 }
 
@@ -150,7 +153,11 @@ pub async fn detail(
     } else {
         (m.width, m.height)
     };
+    let folder = PathBuf::from(&m.folder_path);
+    let writable =
+        tokio::task::spawn_blocking(move || super::organize::is_writable(&folder)).await?;
     Ok(Json(MediaDetail {
+        writable,
         path: m.path().to_string_lossy().into_owned(),
         id: m.id,
         folder_id: m.folder_id,

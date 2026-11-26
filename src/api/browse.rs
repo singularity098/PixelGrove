@@ -335,6 +335,9 @@ pub struct FolderDetail {
     hidden: Option<&'static str>,
     /// Child folders with media somewhere below them, newest first.
     subfolders: Vec<Subfolder>,
+    /// Whether files in it can be moved, trashed or deleted (false on read-only
+    /// mounts), so the UI can grey those out.
+    writable: bool,
 }
 
 pub(super) struct FolderRow {
@@ -433,6 +436,7 @@ fn folder_detail(conn: &Connection, user: &User, id: i64) -> ApiResult<FolderDet
         media_count,
         breadcrumbs,
         subfolders,
+        writable: super::organize::is_writable(Path::new(&folder.path)),
         hidden: if user.hidden.marked_folders.contains(&folder.path) {
             Some("this")
         } else if user.hidden.marks_folder(&folder.path) {

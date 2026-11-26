@@ -13,7 +13,8 @@ An ultra-light, fast, self-hosted photo and video library written in Rust.
   converts it); videos in MP4, MOV, WebM and MKV (repackaged on the fly by the server so
   any browser can play them, with AC-3/DTS audio converted to AAC).
 - Share a photo or folder with a link that needs no account.
-- Copy or move a photo or video to another folder from the viewer.
+- Copy, move, trash or delete photos and videos, one at a time from the viewer or many
+  at once: **Select** on a page (or a long press on a phone), then pick an action.
 - **PixelG**, an Android app with the same features and a native interface, runs the
   same engine on the phone itself (see [android/README.md](android/README.md)).
 - Slideshows, nine colour themes (dark, light, AMOLED black, Dracula, Tokyo Night and the
@@ -73,7 +74,9 @@ Every directory under `/media` is indexed (set `PIXELGROVE_MEDIA_ROOTS` to chang
 Admins can add other folders under **Settings → Media folders**, with a folder browser;
 they just need to be mounted into the container. Folders added there can be removed
 again (only from PixelGrove: the files are never touched). Settings also shows library
-counts and the last scan, and has **Rescan now**.
+counts and the last scan, and has **Rescan now** (also on the Photos page). Every folder
+page has **Rescan** for just that folder and those below it, for anyone who can see it;
+on phones, pull down at the top of Photos or a folder page to do the same.
 
 PixelGrove watches folders for changes and also rescans everything every 6 hours, since
 change notifications don't work on network shares (NFS/SMB). Hidden folders and
@@ -114,18 +117,29 @@ reach the server can create the admin account, so finish setup before exposing i
 
 ## Trash
 
-Deleting an item moves it into a hidden `.pixelgrove-trash` folder at the top of its
+**Move to trash** puts an item into a hidden `.pixelgrove-trash` folder at the top of its
 media folder (same volume, so nothing is copied), mirroring where it came from. It can
-be restored from **Trash** for 30 days, then it is deleted for good. Trash needs the
-media mounted read-write; on a read-only mount (`:ro`) PixelGrove says so and leaves the
-file alone. Favorites are per user and stored only in PixelGrove's database.
+be restored from **Trash** for 30 days, then it is deleted for good. **Delete** skips the
+trash and removes the file straight away (after asking). Both need the media mounted
+read-write; on a read-only mount (`:ro`) the buttons are greyed out. Favorites are per
+user and stored only in PixelGrove's database.
 
 ## Copying and moving
 
-**Copy or move…** in the viewer (editors and admins) picks another folder of the library
-from the folder tree, optionally creating a new folder inside it. The file keeps its
-modification time; a name that's taken gets " (2)". A moved item keeps its favorites,
-hidden mark and share links. Like Trash, this needs the media mounted read-write.
+**Copy to…** and **Move to…** (editors and admins; in the viewer, or for a selection)
+pick another folder of the library from the folder tree, optionally creating a new folder
+inside it. The file keeps its modification time; a name that's taken gets " (2)". A moved
+item keeps its favorites, hidden mark and share links. Moving needs the item's folder
+mounted read-write and copying needs a read-write destination: otherwise the options are
+greyed out (and read-only folders are marked in the folder picker).
+
+To act on many items at once, press **Select** on a folder, Timeline, Favorites, Search or
+Explore page (on touch screens a long press on a photo also starts it), tap the items
+(Shift-click selects a range), then use the bar at the bottom: copy, move, trash or
+delete. Esc or ✕ ends the selection.
+
+**Account → Appearance** can write folder names over their covers instead of underneath
+(remembered per device).
 
 ## Hiding photos and folders
 

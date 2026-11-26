@@ -35,6 +35,8 @@ export interface FolderDetail {
   subfolders: Subfolder[];
   /** Shown only because "show hidden" is on: this folder is hidden, or one above it. */
   hidden?: 'this' | 'parent';
+  /** False on read-only mounts: nothing in it can be moved, trashed or deleted. */
+  writable: boolean;
 }
 
 export interface MediaItem {
@@ -77,6 +79,8 @@ export interface TreeFolder {
   subfolder_count: number;
   latest_taken_at: number | null;
   hidden?: boolean;
+  /** False on read-only mounts: nothing can be copied or moved into it. */
+  writable: boolean;
 }
 
 export interface MediaDetail extends Omit<MediaItem, 'hidden'> {
@@ -94,6 +98,8 @@ export interface MediaDetail extends Omit<MediaItem, 'hidden'> {
   favorite?: boolean;
   /** Shown only because "show hidden" is on: hidden itself, or in a hidden folder. */
   hidden?: 'photo' | 'folder';
+  /** Its folder can be changed (move, trash, delete). Absent for share links. */
+  writable?: boolean;
 }
 
 export interface Paged<T> {
@@ -158,6 +164,14 @@ export class PagedList<T> {
 
   get done(): boolean {
     return this.total !== null && this.items.length >= this.total;
+  }
+
+  /** Starts over from the first page (after a rescan, say). */
+  reset(): Promise<boolean> {
+    this.items = [];
+    this.total = null;
+    this.error = '';
+    return this.more();
   }
 
   /** Loads the next page; resolves to whether anything was added. */

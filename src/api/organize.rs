@@ -1,4 +1,5 @@
-//! Copying and moving a photo or video to another folder of the library.
+//! Copying and moving photos and videos to another folder of the library, one at a
+//! time or a selection at once.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -11,8 +12,11 @@ use serde::{Deserialize, Serialize};
 
 use super::media::visible;
 use super::{ApiError, ApiResult, CurrentUser};
-use crate::auth::Role;
+use crate::auth::{Role, User};
 use crate::server::AppState;
+
+/// The most items one batch request may name.
+pub const MAX_BATCH: usize = 10_000;
 
 #[derive(Deserialize)]
 pub struct Destination {
@@ -21,6 +25,39 @@ pub struct Destination {
     /// Optionally, a new folder to create inside it and use instead.
     #[serde(default)]
     new_folder: Option<String>,
+}
+
+/// A selection to copy or move. (Fields listed out rather than flattening
+/// `Destination`, which would turn the numbers into strings.)
+#[derive(Deserialize)]
+pub struct BatchDestination {
+    ids: Vec<i64>,
+    folder_id: i64,
+    #[serde(default)]
+    new_folder: Option<String>,
+}
+
+/// A selection to trash or delete.
+#[derive(Deserialize)]
+pub struct Selection {
+    pub ids: Vec<i64>,
+}
+
+impl Selection {
+    pub fn checked(self) -> ApiResult<Vec<i64>> {
+        checked_ids(self.ids)
+    }
+}
+
+fn checked_ids(mut ids: Vec<i64>) -> ApiResult<Vec<i64>> {
+    if ids.len() > MAX_BATCH {
+        return Err(ApiError::bad_request(format!(
+            "Select at most {MAX_BATCH} items at a time."
+        )));
+    }
+    let mut seen = std::collections::HashSet::new();
+    ids.retain(|id| seen.insert(*id));
+    Ok(ids)
 }
 
 #[derive(Serialize, Debug)]
@@ -33,10 +70,33 @@ pub struct Placed {
     folder_id: Option<i64>,
 }
 
+/// One item of a batch that couldn't be done, and why.
+#[derive(Serialize, Debug)]
+pub struct Failure {
+    pub id: i64,
+    pub error: String,
+}
+
+/// What a batch did: everything that worked (`placed`, for copies and moves, or a
+/// count) and what didn't.
+#[derive(Serialize, Debug, Default)]
+pub struct BatchResult {
+    pub done: usize,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub placed: Vec<Placed>,
+    pub failed: Vec<Failure>,
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum Mode {
     Copy,
     Move,
+}
+
+/// Whether PixelGrove may create files in `dir` (false on read-only mounts). One
+/// `access(2)` call, so cheap enough for every folder in a listing.
+pub fn is_writable(dir: &Path) -> bool {
+    rustix::fs::access(dir, rustix::fs::Access::WRITE_OK).is_ok()
 }
 
 pub async fn copy(
@@ -45,7 +105,7 @@ pub async fn copy(
     UrlPath(id): UrlPath<i64>,
     Json(to): Json<Destination>,
 ) -> ApiResult<Json<Placed>> {
-    transfer(state, current, id, to, Mode::Copy).await.map(Json)
+    single(state, current, id, to, Mode::Copy).await.map(Json)
 }
 
 pub async fn move_media(
@@ -54,7 +114,23 @@ pub async fn move_media(
     UrlPath(id): UrlPath<i64>,
     Json(to): Json<Destination>,
 ) -> ApiResult<Json<Placed>> {
-    transfer(state, current, id, to, Mode::Move).await.map(Json)
+    single(state, current, id, to, Mode::Move).await.map(Json)
+}
+
+pub async fn copy_many(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Json(to): Json<BatchDestination>,
+) -> ApiResult<Json<BatchResult>> {
+    many(state, current, to, Mode::Copy).await.map(Json)
+}
+
+pub async fn move_many(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Json(to): Json<BatchDestination>,
+) -> ApiResult<Json<BatchResult>> {
+    many(state, current, to, Mode::Move).await.map(Json)
 }
 
 /// A name for a new folder: one path component, not hidden (the scanner skips those).
@@ -72,7 +148,7 @@ fn clean_folder_name(name: &str) -> Result<&str, ApiError> {
     Ok(name)
 }
 
-async fn transfer(
+async fn single(
     state: AppState,
     current: CurrentUser,
     id: i64,
@@ -80,19 +156,67 @@ async fn transfer(
     mode: Mode,
 ) -> ApiResult<Placed> {
     current.require(Role::Editor)?;
-    let user = current.user;
-    let m = visible(&state, user.clone(), id).await?;
-    let not_found = || ApiError::status(StatusCode::NOT_FOUND, "That folder isn't in the library.");
+    let dir = destination(
+        &state,
+        &current.user,
+        to.folder_id,
+        to.new_folder.as_deref(),
+    )
+    .await?;
+    let mut done = transfer(&state, &current.user, vec![id], dir, mode).await?;
+    match done.pop() {
+        Some(Ok(placed)) => Ok(placed),
+        Some(Err(err)) => Err(err),
+        None => Err(ApiError::status(StatusCode::NOT_FOUND, "Not found.")),
+    }
+}
 
+async fn many(
+    state: AppState,
+    current: CurrentUser,
+    to: BatchDestination,
+    mode: Mode,
+) -> ApiResult<BatchResult> {
+    current.require(Role::Editor)?;
+    let ids = checked_ids(to.ids)?;
+    let dir = destination(
+        &state,
+        &current.user,
+        to.folder_id,
+        to.new_folder.as_deref(),
+    )
+    .await?;
+    let results = transfer(&state, &current.user, ids.clone(), dir, mode).await?;
+    let mut out = BatchResult::default();
+    for (id, result) in ids.into_iter().zip(results) {
+        match result {
+            Ok(placed) => out.placed.push(placed),
+            Err(err) => out.failed.push(Failure {
+                id,
+                error: err.message(),
+            }),
+        }
+    }
+    out.done = out.placed.len();
+    Ok(out)
+}
+
+/// The directory to copy or move into: a folder the user may see, or a new folder
+/// inside it.
+async fn destination(
+    state: &AppState,
+    user: &User,
+    folder_id: i64,
+    new_folder: Option<&str>,
+) -> ApiResult<PathBuf> {
+    let not_found = || ApiError::status(StatusCode::NOT_FOUND, "That folder isn't in the library.");
     let folder_path: String = state
         .db
         .run(move |conn| {
             Ok(conn
-                .query_row(
-                    "SELECT path FROM folders WHERE id = ?1",
-                    [to.folder_id],
-                    |r| r.get(0),
-                )
+                .query_row("SELECT path FROM folders WHERE id = ?1", [folder_id], |r| {
+                    r.get(0)
+                })
                 .optional()?)
         })
         .await?
@@ -101,84 +225,138 @@ async fn transfer(
         return Err(not_found());
     }
     let mut dir = PathBuf::from(&folder_path);
-    if let Some(name) = &to.new_folder {
+    if let Some(name) = new_folder.filter(|n| !n.trim().is_empty()) {
         dir.push(clean_folder_name(name)?);
     }
-    let source = m.path();
-    if mode == Mode::Move && source.parent() == Some(dir.as_path()) {
-        return Err(ApiError::bad_request("It's already in that folder."));
-    }
+    Ok(dir)
+}
 
-    let from = source.clone();
-    let target = tokio::task::spawn_blocking(move || place(&from, &dir, mode)).await?;
-    let target = target.map_err(|err| match err.kind() {
+fn io_error(err: io::Error) -> ApiError {
+    match err.kind() {
         io::ErrorKind::NotFound => {
             ApiError::status(StatusCode::NOT_FOUND, "The file is no longer on disk.")
         }
         io::ErrorKind::PermissionDenied | io::ErrorKind::ReadOnlyFilesystem => ApiError::status(
             StatusCode::CONFLICT,
-            "That folder is read-only, so PixelGrove can't put files in it.",
+            "That folder is read-only, so PixelGrove can't change files in it.",
         ),
         _ => ApiError::Internal(anyhow::Error::new(err).context("copying file")),
-    })?;
+    }
+}
 
-    // Index the new file first, so a moved item's favorites, hidden mark and share
-    // links can follow it before the old entry goes.
-    state.indexer.rescan(vec![target.clone()]).await;
-    let name = target
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let (folder, file) = (
-        target
-            .parent()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_default(),
-        name.clone(),
-    );
-    let old_id = m.id;
-    let placed = state
+/// Copies or moves each item into `dir`. One result per id, in order; the folders
+/// involved are rescanned once at the end, not once per file.
+async fn transfer(
+    state: &AppState,
+    user: &User,
+    ids: Vec<i64>,
+    dir: PathBuf,
+    mode: Mode,
+) -> ApiResult<Vec<ApiResult<Placed>>> {
+    // (old id, source, target) for each file that made it.
+    let mut placed: Vec<(i64, PathBuf, PathBuf)> = Vec::new();
+    let mut results: Vec<Result<usize, ApiError>> = Vec::with_capacity(ids.len());
+    for id in ids {
+        let m = match visible(state, user.clone(), id).await {
+            Ok(m) => m,
+            Err(err) => {
+                results.push(Err(err));
+                continue;
+            }
+        };
+        let source = m.path();
+        if mode == Mode::Move && source.parent() == Some(dir.as_path()) {
+            results.push(Err(ApiError::bad_request("It's already in that folder.")));
+            continue;
+        }
+        let (from, into) = (source.clone(), dir.clone());
+        match tokio::task::spawn_blocking(move || place(&from, &into, mode)).await? {
+            Ok(target) => {
+                results.push(Ok(placed.len()));
+                placed.push((m.id, source, target));
+            }
+            Err(err) => results.push(Err(io_error(err))),
+        }
+    }
+    // Index the new files first, so moved items' favorites, hidden marks and share
+    // links can follow them before the old entries go.
+    state
+        .indexer
+        .rescan(placed.iter().map(|(_, _, t)| t.clone()).collect())
+        .await;
+    let lookups: Vec<(i64, String, String)> = placed
+        .iter()
+        .map(|(old, _, target)| {
+            (
+                *old,
+                target
+                    .parent()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+                target
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+            )
+        })
+        .collect();
+    let found = state
         .db
         .run(move |conn| {
-            let new: Option<(i64, i64)> = conn
-                .query_row(
-                    "SELECT m.id, f.id FROM media m JOIN folders f ON f.id = m.folder_id
-                     WHERE f.path = ?1 AND m.name = ?2",
-                    params![folder, file],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .optional()?;
-            if mode == Mode::Move
-                && let Some((new_id, _)) = new
-            {
-                let tx = conn.transaction()?;
-                tx.execute(
-                    "INSERT OR IGNORE INTO favorites (user_id, media_id, created_at)
-                     SELECT user_id, ?2, created_at FROM favorites WHERE media_id = ?1",
-                    params![old_id, new_id],
-                )?;
-                tx.execute(
-                    "INSERT OR IGNORE INTO hidden (user_id, media_id, created_at)
-                     SELECT user_id, ?2, created_at FROM hidden WHERE media_id = ?1",
-                    params![old_id, new_id],
-                )?;
-                tx.execute(
-                    "UPDATE shares SET media_id = ?2 WHERE media_id = ?1",
-                    params![old_id, new_id],
-                )?;
-                tx.commit()?;
+            let tx = conn.transaction()?;
+            let mut found = Vec::with_capacity(lookups.len());
+            for (old_id, folder, file) in &lookups {
+                let new: Option<(i64, i64)> = tx
+                    .query_row(
+                        "SELECT m.id, f.id FROM media m JOIN folders f ON f.id = m.folder_id
+                         WHERE f.path = ?1 AND m.name = ?2",
+                        params![folder, file],
+                        |r| Ok((r.get(0)?, r.get(1)?)),
+                    )
+                    .optional()?;
+                if mode == Mode::Move
+                    && let Some((new_id, _)) = new
+                {
+                    tx.execute(
+                        "INSERT OR IGNORE INTO favorites (user_id, media_id, created_at)
+                         SELECT user_id, ?2, created_at FROM favorites WHERE media_id = ?1",
+                        params![old_id, new_id],
+                    )?;
+                    tx.execute(
+                        "INSERT OR IGNORE INTO hidden (user_id, media_id, created_at)
+                         SELECT user_id, ?2, created_at FROM hidden WHERE media_id = ?1",
+                        params![old_id, new_id],
+                    )?;
+                    tx.execute(
+                        "UPDATE shares SET media_id = ?2 WHERE media_id = ?1",
+                        params![old_id, new_id],
+                    )?;
+                }
+                found.push((new, file.clone()));
             }
-            Ok(new)
+            tx.commit()?;
+            Ok(found)
         })
         .await?;
     if mode == Mode::Move {
-        state.indexer.rescan(vec![source]).await;
+        state
+            .indexer
+            .rescan(placed.iter().map(|(_, s, _)| s.clone()).collect())
+            .await;
     }
-    Ok(Placed {
-        id: placed.map(|(id, _)| id),
-        folder_id: placed.map(|(_, folder)| folder),
-        name,
-    })
+    Ok(results
+        .into_iter()
+        .map(|r| {
+            r.map(|i| {
+                let (new, name) = &found[i];
+                Placed {
+                    id: new.map(|(id, _)| id),
+                    folder_id: new.map(|(_, folder)| folder),
+                    name: name.clone(),
+                }
+            })
+        })
+        .collect())
 }
 
 /// Copies or moves `from` into `dir` (created if needed), under a free name, keeping
@@ -370,5 +548,128 @@ mod tests {
             StatusCode::NOT_FOUND,
             "hidden folders aren't destinations"
         );
+    }
+
+    #[tokio::test]
+    async fn batches_copy_move_trash_and_delete_selections() {
+        let app = TestApp::new();
+        for name in ["p1", "p2", "p3", "p4"] {
+            app.write_media(
+                &format!("a/{name}.jpg"),
+                &testdata::jpeg_taken_at("2020:01:01 00:00:00"),
+            );
+        }
+        app.write_media("b/y.jpg", &testdata::jpeg_taken_at("2021:01:01 00:00:00"));
+        app.scan();
+        let admin = app.setup_admin().await;
+        let ids: Vec<i64> = ["p1.jpg", "p2.jpg", "p3.jpg", "p4.jpg"]
+            .iter()
+            .map(|n| app.media_id(n))
+            .collect();
+        let b = app.folder_id("b");
+
+        let folder = app
+            .send("GET", &format!("/api/folders/{b}"), None, Some(&admin))
+            .await;
+        assert_eq!(folder.body["writable"], true);
+        let status = app
+            .send("GET", "/api/library/status", None, Some(&admin))
+            .await;
+        assert_eq!(status.body["writable"], true);
+
+        // Copy two (plus an unknown id, reported, not fatal).
+        let copied = app
+            .send(
+                "POST",
+                "/api/media/copy",
+                Some(json!({"ids": [ids[0], ids[1], 9999], "folder_id": b})),
+                Some(&admin),
+            )
+            .await;
+        assert_eq!(copied.status, StatusCode::OK, "{:?}", copied.body);
+        assert_eq!(copied.body["done"], 2);
+        assert_eq!(copied.body["failed"][0]["id"], 9999);
+        assert!(app.media_root().join("b/p1.jpg").is_file());
+        assert!(app.media_root().join("a/p1.jpg").is_file());
+
+        // Move two into a new folder.
+        let moved = app
+            .send(
+                "POST",
+                "/api/media/move",
+                Some(json!({"ids": [ids[2], ids[3]], "folder_id": b, "new_folder": "Sub"})),
+                Some(&admin),
+            )
+            .await;
+        assert_eq!(moved.body["done"], 2, "{:?}", moved.body);
+        assert!(app.media_root().join("b/Sub/p3.jpg").is_file());
+        assert!(!app.media_root().join("a/p3.jpg").exists());
+
+        // Trash one, delete another for good.
+        let trashed = app
+            .send(
+                "POST",
+                "/api/media/trash",
+                Some(json!({"ids": [ids[0]]})),
+                Some(&admin),
+            )
+            .await;
+        assert_eq!(trashed.body["done"], 1, "{:?}", trashed.body);
+        let deleted = app
+            .send(
+                "POST",
+                "/api/media/delete",
+                Some(json!({"ids": [ids[1]]})),
+                Some(&admin),
+            )
+            .await;
+        assert_eq!(deleted.body["done"], 1, "{:?}", deleted.body);
+        assert!(!app.media_root().join("a/p2.jpg").exists());
+        let trash = app.send("GET", "/api/trash", None, Some(&admin)).await;
+        assert_eq!(trash.body["total"], 1, "deleted items skip the trash");
+        let a = app.folder_id("a");
+        let folder = app
+            .send("GET", &format!("/api/folders/{a}"), None, Some(&admin))
+            .await;
+        assert_eq!(folder.body["media_count"], 0);
+
+        // A single item can be deleted too; viewers can't.
+        let y = app.media_id("y.jpg");
+        let viewer = app.user_session(&admin, "viewer", "viewer").await;
+        let refused = app
+            .send("DELETE", &format!("/api/media/{y}"), None, Some(&viewer))
+            .await;
+        assert_eq!(refused.status, StatusCode::FORBIDDEN);
+        let gone = app
+            .send("DELETE", &format!("/api/media/{y}"), None, Some(&admin))
+            .await;
+        assert_eq!(gone.status, StatusCode::NO_CONTENT);
+        assert!(!app.media_root().join("b/y.jpg").exists());
+    }
+
+    #[tokio::test]
+    async fn rescanning_a_folder_picks_up_new_files() {
+        let (app, _) = library();
+        let admin = app.setup_admin().await;
+        let viewer = app.user_session(&admin, "viewer", "viewer").await;
+        app.write_media("a/new.jpg", &testdata::jpeg_taken_at("2022:01:01 00:00:00"));
+        let a = app.folder_id("a");
+        let response = app
+            .send(
+                "POST",
+                &format!("/api/folders/{a}/rescan"),
+                None,
+                Some(&viewer),
+            )
+            .await;
+        assert_eq!(response.status, StatusCode::NO_CONTENT);
+        let folder = app
+            .send("GET", &format!("/api/folders/{a}"), None, Some(&viewer))
+            .await;
+        assert_eq!(folder.body["media_count"], 2);
+        let missing = app
+            .send("POST", "/api/folders/9999/rescan", None, Some(&viewer))
+            .await;
+        assert_eq!(missing.status, StatusCode::NOT_FOUND);
     }
 }

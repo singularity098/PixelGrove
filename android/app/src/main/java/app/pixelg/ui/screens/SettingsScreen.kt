@@ -172,6 +172,19 @@ fun SettingsScreen() {
                 )
             }
 
+            Section("Display") {
+                SwitchRow(
+                    "Folder names on covers",
+                    "Write each folder's name over the bottom of its cover instead of underneath.",
+                    Prefs.namesOnCovers, Prefs::setNamesOnCovers,
+                )
+                SwitchRow(
+                    "Play animations in grids",
+                    "Animated GIFs and WebPs move in folders and the timeline, not just when opened. Videos stay still: playing many at once would drain the battery.",
+                    Prefs.animateGrid, Prefs::setAnimateGrid,
+                )
+            }
+
             Section("Thumbnails") {
                 cache?.let { c ->
                     Text("${formatBytes(c.size)} of ${formatBytes(c.capacity)} used")

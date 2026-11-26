@@ -1,5 +1,6 @@
 <script lang="ts">
   import { del, get, post, put } from '../lib/api';
+  import { libraryInfo } from '../lib/library.svelte';
   import { session } from '../lib/session.svelte';
   import {
     formatBytes,
@@ -48,7 +49,11 @@
     !readOnly && session.current.status === 'signed-in' && session.current.user.role !== 'viewer',
   );
   let sharing = $state(false);
-  let moving = $state(false);
+  let moving = $state<'copy' | 'move' | null>(null);
+  $effect(() => {
+    if (canEdit) libraryInfo.load();
+  });
+
   let slideshow = $state(false);
   // The overflow menu on narrow screens.
   let menu = $state(false);
@@ -78,7 +83,9 @@
   let tx = $state(0);
   let ty = $state(0);
   let showInfo = $state(false);
-  let detail: MediaDetail | null = $state(null);
+  let detail = $state<MediaDetail | null>(null);
+  // Read-only mounts: nothing can be moved out, trashed or deleted.
+  const canChange = $derived(detail?.writable !== false);
   let toast = $state('');
   let toastTimer: ReturnType<typeof setTimeout>;
   // Zoomed-in photos switch to the full-resolution original.
@@ -151,13 +158,28 @@
   }
 
   async function moveToTrash() {
-    if (trashing || !confirm(`Move “${item.name}” to the trash? You can restore it for 30 days.`)) return;
+    if (trashing || !canChange || !confirm(`Move “${item.name}” to the trash? You can restore it for 30 days.`)) return;
     trashing = true;
     const id = item.id;
     try {
       await post(`/media/${id}/trash`);
       onremoved(id);
       flash('Moved to trash');
+    } catch (e) {
+      flash((e as Error).message);
+    } finally {
+      trashing = false;
+    }
+  }
+
+  async function deleteForever() {
+    if (trashing || !canChange || !confirm(`Delete “${item.name}” for good? It skips the trash and can't be restored.`)) return;
+    trashing = true;
+    const id = item.id;
+    try {
+      await del(`/media/${id}`);
+      onremoved(id);
+      flash('Deleted');
     } catch (e) {
       flash((e as Error).message);
     } finally {
@@ -380,7 +402,10 @@
         if (canEdit) toggleFavorite();
         break;
       case 'Delete':
-        if (canEdit) moveToTrash();
+        if (canEdit) {
+          if (event.shiftKey) deleteForever();
+          else moveToTrash();
+        }
         break;
       case 'h':
         if (canEdit) toggleHidden();
@@ -419,8 +444,15 @@
 
   // Zooming in swaps to the original, when it may be fetched.
   const original = $derived(needsPreview(item.name) ? null : urls.file(item));
+  // GIFs play from the original: the server's preview is a still JPEG of the first
+  // frame for any GIF that needs shrinking.
+  const animated = $derived(/\.gif$/i.test(item.name));
   const src = $derived(
-    item.kind === 'image' ? (wantOriginal && original ? original : urls.large(item)) : (original ?? ''),
+    item.kind === 'image'
+      ? (wantOriginal || animated) && original
+        ? original
+        : urls.large(item)
+      : (original ?? ''),
   );
   const download = $derived(urls.download(item));
 </script>
@@ -474,11 +506,17 @@
           title={detail?.hidden === 'folder' ? 'In a hidden folder (unhide the folder)' : detail?.hidden ? 'Unhide (h)' : isAdmin ? 'Hide from everyone (h)' : 'Hide (h)'}>
           <Icon name={detail?.hidden ? 'eye' : 'eyeOff'} /><span class="label">{detail?.hidden ? 'Unhide' : 'Hide'}</span>
         </button>
-        <button class="icon" style="order: 9" onclick={() => (moving = true)} disabled={!detail} aria-label="Copy or move to folder" title="Copy or move to another folder">
-          <Icon name="folder" /><span class="label">Copy or move…</span>
+        <button class="icon" style="order: 9" onclick={() => (moving = 'copy')} disabled={!detail || !libraryInfo.writable} aria-label="Copy to folder" title={libraryInfo.writable ? 'Copy to another folder' : 'Every media folder is read-only'}>
+          <Icon name="copyTo" /><span class="label">Copy to…</span>
         </button>
-        <button class="icon" style="order: 10" onclick={moveToTrash} disabled={trashing} aria-label="Move to trash" title="Move to trash (Delete)">
+        <button class="icon" style="order: 9" onclick={() => (moving = 'move')} disabled={!detail || !canChange} aria-label="Move to folder" title={canChange ? 'Move to another folder' : 'This folder is read-only'}>
+          <Icon name="moveTo" /><span class="label">Move to…</span>
+        </button>
+        <button class="icon" style="order: 10" onclick={moveToTrash} disabled={trashing || !canChange} aria-label="Move to trash" title={canChange ? 'Move to trash (Delete)' : 'This folder is read-only'}>
           <Icon name="trash" /><span class="label">Move to trash</span>
+        </button>
+        <button class="icon" style="order: 10" onclick={deleteForever} disabled={trashing || !canChange} aria-label="Delete for good" title={canChange ? 'Delete for good, skipping the trash (Shift+Delete)' : 'This folder is read-only'}>
+          <Icon name="deleteForever" /><span class="label">Delete</span>
         </button>
       {/if}
     </div>
@@ -577,12 +615,13 @@
   {/if}
   {#if moving && detail}
     <MoveDialog
-      item={{ id: detail.id, name: detail.name }}
+      mode={moving}
+      items={[{ id: detail.id, name: detail.name }]}
       folderId={detail.folder_id ?? null}
-      onclose={() => (moving = false)}
-      ondone={({ moved, folder }) => {
-        flash(`${moved ? 'Moved' : 'Copied'} to ${folder}`);
-        if (moved) onremoved(item.id);
+      onclose={() => (moving = null)}
+      ondone={({ mode, folder }) => {
+        flash(`${mode === 'move' ? 'Moved' : 'Copied'} to ${folder}`);
+        if (mode === 'move') onremoved(item.id);
       }} />
   {/if}
   {#if slideshow}

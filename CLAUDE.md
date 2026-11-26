@@ -166,6 +166,12 @@ cd web && npm ci && npm run check && npm run build   # check = svelte-check --fa
   overridden with `referrerPolicy: 'strict-origin'` on the map's tile layer.
 - Storage figures come from the mounts under each media root (`/proc/self/mountinfo`),
   not the container's own filesystem.
+- Previews of GIFs (and of anything else that needs shrinking) are still JPEGs, so both
+  viewers play GIFs from the original file (PixelG through `AnimatedImageDrawable`, which
+  also plays animated WebP).
+- Selections act through the batch endpoints (`POST /api/media/{copy,move,trash,delete}`),
+  which rescan each folder once per batch; looping over the single-item endpoints would
+  rescan once per file.
 - JPEG XL: `cjxl` Brotli-compresses the Exif box (`brob`); full decodes are memory-
   hungry (~200–450 MB for 12 MP), so they run one at a time.
 - Back/Forward scroll restoration is manual (`lib/router.svelte.ts`) and keeps scrolling

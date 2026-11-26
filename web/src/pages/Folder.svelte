@@ -3,13 +3,16 @@
   import MoreSpace from '../components/MoreSpace.svelte';
   import Icon from '../components/Icon.svelte';
   import MediaViewerHost from '../components/MediaViewerHost.svelte';
+  import PullToRefresh from '../components/PullToRefresh.svelte';
+  import SelectionBar from '../components/SelectionBar.svelte';
   import ShareDialog from '../components/ShareDialog.svelte';
   import Slideshow from '../components/Slideshow.svelte';
   import Thumb from '../components/Thumb.svelte';
-  import { del, get, put } from '../lib/api';
+  import { del, get, post, put } from '../lib/api';
   import { PagedList, type FolderDetail, type MediaItem } from '../lib/media.svelte';
   import { openViewer } from '../lib/query';
   import { link, navigate } from '../lib/router.svelte';
+  import { Selection } from '../lib/selection.svelte';
   import { session } from '../lib/session.svelte';
   import { slideshowSettings } from '../lib/slideshow.svelte';
 
@@ -22,6 +25,24 @@
   // The page is keyed on the folder id, so this is created once per folder.
   // svelte-ignore state_referenced_locally
   const media = new PagedList<MediaItem>(`/folders/${id}/media`, 200);
+  const selection = new Selection();
+
+  // Rescan: looks for new, changed and deleted files in this folder (and below) now,
+  // rather than waiting for the file watcher or the next scheduled scan.
+  let rescanning = $state(false);
+  async function rescan() {
+    if (rescanning) return;
+    rescanning = true;
+    try {
+      await post(`/folders/${id}/rescan`);
+      selection.clear();
+      await Promise.all([loadFolder(), media.reset()]);
+    } catch (e) {
+      error = (e as Error).message;
+    } finally {
+      rescanning = false;
+    }
+  }
 
   let slideshow = $state(false);
   const hasSubfolders = $derived(!!folder?.subfolders.length);
@@ -87,9 +108,17 @@
     <div class="title">
       <h2>{folder.name}</h2>
       <div class="actions">
+        {#if canShare && folder.media_count}
+          <button class="ghost action" class:on={selection.active} onclick={() => (selection.active ? selection.clear() : selection.start())} title="Select photos and videos to copy, move or delete">
+            <Icon name="select" size={16} /> Select
+          </button>
+        {/if}
         {#if folder.media_count || folder.subfolders.length}
           <button class="ghost action" onclick={() => (slideshow = true)}><Icon name="slideshow" size={16} /> Slideshow</button>
         {/if}
+        <button class="ghost action" onclick={rescan} disabled={rescanning} title="Look for new and changed files in this folder now">
+          <Icon name="refresh" size={16} /> {rescanning ? 'Rescanning…' : 'Rescan'}
+        </button>
         {#if canShare}
           <button class="ghost action" onclick={() => (sharing = true)}><Icon name="sharing" size={16} /> Share</button>
           {#if folder.hidden !== 'parent'}
@@ -125,12 +154,16 @@
     {/if}
   {/if}
 
-  <MediaGrid items={media.items} onopen={(i) => openViewer(media.items[i].id)} />
+  <MediaGrid items={media.items} onopen={(i) => openViewer(media.items[i].id)} selection={canShare ? selection : undefined} />
   <MoreSpace list={media} />
   {#if media.error}<p class="error">{media.error}</p>{/if}
 </section>
 
 <MediaViewerHost source={media} />
+<PullToRefresh onrefresh={rescan} />
+{#if canShare}
+  <SelectionBar {selection} source={media} folderId={id} writable={folder?.writable ?? true} />
+{/if}
 
 {#if slideshow}
   <Slideshow source={slides} allowSubfolders={hasSubfolders} onclose={() => (slideshow = false)} />
@@ -177,6 +210,11 @@
     gap: 6px;
   }
 
+  .action.on {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
   @media (max-width: 520px) {
     /* Icon-only buttons on phones, so the folder name keeps its room. */
     .action {
@@ -201,7 +239,6 @@
     gap: 10px;
     padding: 6px 14px 6px 6px;
     border: 1px solid var(--border);
-    border-radius: 12px;
     background: var(--surface);
     color: var(--text);
     text-decoration: none;
@@ -230,7 +267,6 @@
   .subfolder .cover {
     width: 48px;
     height: 48px;
-    border-radius: 8px;
     overflow: hidden;
     flex: none;
   }

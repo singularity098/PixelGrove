@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { display } from '../lib/display.svelte';
   import { post, type User } from '../lib/api';
   import { currentTheme, setTheme, THEMES } from '../theme';
 
@@ -77,9 +78,25 @@
       </button>
     {/each}
   </div>
+  <label class="toggle">
+    <input type="checkbox" checked={display.namesOnCovers} onchange={(e) => display.setNamesOnCovers(e.currentTarget.checked)} />
+    Show folder names over their covers
+  </label>
 </section>
 
 <style>
+  .toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 16px;
+  }
+
+  .toggle input {
+    width: auto;
+    margin: 0;
+  }
+
   h3 {
     margin-top: 28px;
   }

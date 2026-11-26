@@ -11,6 +11,8 @@ import app.pixelg.core.Engine
 import app.pixelg.core.Library
 import app.pixelg.core.Prefs
 import app.pixelg.ui.theme.PixelGTheme
+import androidx.compose.ui.test.longClick
+import androidx.compose.ui.test.performTouchInput
 import com.github.takahirom.roborazzi.captureRoboImage
 import kotlinx.coroutines.runBlocking
 import org.junit.Before
@@ -86,6 +88,13 @@ class ScreenshotTest {
         shot("folder")
 
         val firstItem = runBlocking { Library.folderMedia(firstAlbum.id, 0, 1).items.first() }
+        // A long press starts selecting; the top bar turns into the selection's actions.
+        compose.onAllNodes(hasContentDescription(firstItem.name))[0].performTouchInput { longClick() }
+        settle(800)
+        shot("selecting")
+        compose.onAllNodes(hasContentDescription("Cancel selection"))[0].performClick()
+        settle(500)
+
         compose.onAllNodes(hasContentDescription(firstItem.name))[0].performClick()
         settle(3000)
         shot("viewer")
@@ -99,6 +108,10 @@ class ScreenshotTest {
         Prefs.setTheme("light")
         compose.setContent { PixelGTheme { PixelGApp() } }
         compose.waitUntil(10_000) { compose.onAllNodes(hasText("Photos")).fetchSemanticsNodes().isNotEmpty() }
+        Prefs.setNamesOnCovers(true)
+        settle(1500)
+        shot("photos-names")
+        Prefs.setNamesOnCovers(false)
         for ((label, name) in listOf("Timeline" to "timeline", "Explore" to "explore", "Settings" to "settings", "File View" to "files")) {
             compose.onAllNodes(hasContentDescription("Menu"))[0].performClick()
             settle(800)

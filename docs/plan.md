@@ -90,10 +90,18 @@ only where the browser shows it). Browse API calls take 1–4 ms at 100k files.
 
 ### Changing files
 - **Trash:** deleting moves the file to `<watch root>/.pixelgrove-trash/<relative path>`;
-  it is purged automatically after 30 days. Trash is disabled automatically for read-only mounts.
+  it is purged automatically after 30 days. **Delete** removes the file outright, skipping
+  the trash. Both are greyed out for read-only mounts (`writable` on folder and media
+  details, from one `access(2)` call).
 - **Copy / move** to another folder of the library (editors and admins): keeps the mtime,
   picks a free name, and a move carries favorites, hidden marks and share links over to the
-  new entry. No other edits (no rotate/rename/upload).
+  new entry. Copy is greyed out when no media folder is writable, move when the item's
+  folder isn't. No other edits (no rotate/rename/upload).
+- **Selections:** `POST /api/media/{copy,move,trash,delete}` take `{ids}` (up to 10,000)
+  and answer `{done, placed, failed}`; the folders involved are rescanned once per batch,
+  not once per file.
+- **Rescan a folder:** `POST /api/folders/{id}/rescan` (anyone who can see it) rescans the
+  subtree and answers when done; the UIs use it for Rescan and pull to refresh.
 - **Favorites** are per-user and stored in the database only (never written into files).
 
 ### Users & sharing

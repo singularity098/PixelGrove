@@ -195,6 +195,15 @@ pub fn restore(
     Ok(Ok(restored))
 }
 
+/// Deletes a library file for good (Delete, as opposed to Move to trash). The caller
+/// rescans its folder so the index drops it.
+pub fn delete_file(path: &Path) -> Result<std::result::Result<(), MoveError>> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(Ok(())),
+        Err(err) => classified(err),
+    }
+}
+
 /// Deletes a trashed file for good. A file that's already gone just drops its record.
 pub fn delete_forever(conn: &Connection, item: &TrashItem) -> Result<Result<(), MoveError>> {
     match std::fs::remove_file(&item.trash_path) {

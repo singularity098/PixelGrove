@@ -5,9 +5,15 @@
   import type { MediaItem } from '../lib/media.svelte';
   import { openViewer } from '../lib/query';
   import { onVisible } from '../lib/router.svelte';
+  import SelectButton from '../components/SelectButton.svelte';
+  import SelectionBar from '../components/SelectionBar.svelte';
+  import { Selection } from '../lib/selection.svelte';
+  import { session } from '../lib/session.svelte';
   import { endOfMonth, monthLabel, Timeline, type Month } from '../lib/timeline.svelte';
 
   const timeline = new Timeline();
+  const selection = new Selection();
+  const canEdit = $derived(session.current.status === 'signed-in' && session.current.user.role !== 'viewer');
   let months: Month[] = $state([]);
   let activeMonth: string | null = $state(null);
 
@@ -54,7 +60,10 @@
 
 <div class="layout">
   <section class="page wide">
-    <h2>Timeline</h2>
+    <div class="heading">
+      <h2>Timeline</h2>
+      {#if canEdit && timeline.items.length}<SelectButton {selection} />{/if}
+    </div>
     {#if timeline.startedBefore !== null}
       <p class="muted small">
         Showing from {activeMonth ? monthLabel(activeMonth) : 'earlier'} back.
@@ -63,7 +72,7 @@
     {/if}
     {#each days as day (day.key)}
       <h3 class="day" data-scroll-label={monthLabel(day.key.slice(0, 7))}>{day.label}</h3>
-      <MediaGrid items={day.items} onopen={(i) => openViewer(timeline.items[day.start + i].id)} />
+      <MediaGrid items={day.items} onopen={(i) => openViewer(timeline.items[day.start + i].id)} selection={canEdit ? selection : undefined} />
     {/each}
     {#if !timeline.loading && timeline.items.length === 0 && !timeline.hasMore}
       <p class="muted">Nothing here yet.</p>
@@ -105,8 +114,16 @@
 </div>
 
 <MediaViewerHost source={timeline} />
+{#if canEdit}<SelectionBar {selection} source={timeline} />{/if}
 
 <style>
+  .heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
   .layout {
     display: flex;
     align-items: flex-start;

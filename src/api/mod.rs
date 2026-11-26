@@ -69,8 +69,16 @@ pub fn router() -> Router<AppState> {
         .route("/folders/filter", get(search::filter_folders))
         .route("/folders/{id}", get(browse::folder))
         .route("/folders/{id}/media", get(browse::folder_media))
+        .route("/folders/{id}/rescan", post(library::rescan_folder))
         .route("/media/batch", get(explore::batch))
-        .route("/media/{id}", get(media::detail))
+        .route("/media/copy", post(organize::copy_many))
+        .route("/media/move", post(organize::move_many))
+        .route("/media/trash", post(trash::trash_many))
+        .route("/media/delete", post(trash::delete_many))
+        .route(
+            "/media/{id}",
+            get(media::detail).delete(trash::delete_media),
+        )
         .route("/media/{id}/preview/{variant}", get(media::preview))
         .route("/media/{id}/file", get(media::file))
         .route(
@@ -160,6 +168,18 @@ impl ApiError {
 
     pub fn bad_request(message: impl Into<String>) -> Self {
         Self::status(StatusCode::BAD_REQUEST, message)
+    }
+
+    /// The user-facing message, for reporting one item's failure inside a batch
+    /// response. Internal errors are logged here, as a response would log them.
+    pub fn message(&self) -> String {
+        match self {
+            ApiError::Status(_, message) => message.clone(),
+            ApiError::Internal(err) => {
+                tracing::error!("request failed: {err:#}");
+                "Something went wrong.".to_string()
+            }
+        }
     }
 
     pub fn unauthorized() -> Self {

@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DeleteForever
 import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
+import androidx.compose.material.icons.outlined.CreateNewFolder
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.Info
@@ -80,6 +81,7 @@ import app.pixelg.ui.LocalNav
 import app.pixelg.ui.ShowHidden
 import app.pixelg.ui.components.ConfirmDialog
 import app.pixelg.ui.components.FolderPickerDialog
+import app.pixelg.ui.components.LibraryWritable
 import app.pixelg.ui.formatBytes
 import app.pixelg.ui.formatDateTime
 import app.pixelg.ui.formatDuration
@@ -117,7 +119,7 @@ fun ViewerScreen() {
     var detail by remember { mutableStateOf<MediaDetail?>(null) }
     var info by remember { mutableStateOf(false) }
     var menu by remember { mutableStateOf(false) }
-    var moving by remember { mutableStateOf(false) }
+    var moving by remember { mutableStateOf<Boolean?>(null) } // move = true, copy = false
     var confirm by remember { mutableStateOf<String?>(null) }
     val current: MediaItem? = items.getOrNull(pager.currentPage)
 
@@ -162,6 +164,8 @@ fun ViewerScreen() {
                 Box(Modifier.fillMaxSize()) {
                     VideoPlayer(item, playing = page == pager.currentPage)
                 }
+            } else if (isAnimatable(item.name)) {
+                AnimatedImage(item, onTap = { controls = !controls }, onZoomed = { zoomed = it })
             } else {
                 ZoomableImage(item, onTap = { controls = !controls }, onZoomed = { zoomed = it })
             }
@@ -219,7 +223,10 @@ fun ViewerScreen() {
                     Box {
                         IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, "More", tint = Color.White) }
                         DropdownMenu(menu, { menu = false }) {
-                            MenuEntry("Copy or move to folder…", Icons.AutoMirrored.Outlined.DriveFileMove, d != null) { menu = false; moving = true }
+                            // Read-only storage: nothing can be moved out, trashed or deleted.
+                            val canChange = d?.writable == true
+                            MenuEntry("Copy to folder…", Icons.Outlined.CreateNewFolder, d != null && LibraryWritable.on) { menu = false; moving = false }
+                            MenuEntry("Move to folder…", Icons.AutoMirrored.Outlined.DriveFileMove, canChange) { menu = false; moving = true }
                             MenuEntry("Open with…", Icons.AutoMirrored.Outlined.OpenInNew, d != null) {
                                 menu = false; if (d != null) act { Files.openWith(context, d.path, d.kind) }
                             }
@@ -251,7 +258,7 @@ fun ViewerScreen() {
                                     }
                                 }
                             }
-                            MenuEntry("Move to trash", Icons.Outlined.Delete, d != null) {
+                            MenuEntry("Move to trash", Icons.Outlined.Delete, canChange) {
                                 menu = false
                                 if (d != null) act {
                                     Library.trash(d.id)
@@ -259,6 +266,10 @@ fun ViewerScreen() {
                                     toast("Moved to trash")
                                     removed(d.id)
                                 }
+                            }
+                            MenuEntry("Delete permanently", Icons.Outlined.DeleteForever, canChange) {
+                                menu = false
+                                confirm = "delete"
                             }
                         }
                     }
@@ -272,19 +283,40 @@ fun ViewerScreen() {
             ModalBottomSheet(onDismissRequest = { info = false }) { InfoPanel(d) }
         }
     }
-    if (moving) {
+    moving?.let { move ->
         detail?.let { d ->
             FolderPickerDialog(
-                name = d.name,
+                title = "${if (move) "Move" else "Copy"} “${d.name}” to…",
+                move = move,
                 currentFolderId = d.folderId,
-                onDismiss = { moving = false },
-                onPick = { move, folderId, newFolder -> Library.transfer(d.id, move, folderId, newFolder) },
-                onDone = { move, placed, folder ->
-                    moving = false
-                    val newPath = placed.id?.let { Native.path(it, false) }
+                onDismiss = { moving = null },
+                onPick = { folderId, newFolder ->
+                    val result = Library.transferMany(listOf(d.id), move, folderId, newFolder)
+                    result.failed.firstOrNull()?.let { error(it.error) }
+                    result
+                },
+                onDone = { result, folder ->
+                    moving = null
+                    val newPath = result.placed.firstOrNull()?.id?.let { Native.path(it, false) }
                     Files.announce(context, *listOfNotNull(d.path.takeIf { move }, newPath).toTypedArray())
                     toast("${if (move) "Moved" else "Copied"} to $folder")
                     if (move) removed(d.id) else Engine.changed()
+                },
+            )
+        }
+    }
+    if (confirm == "delete") {
+        detail?.let { d ->
+            ConfirmDialog(
+                "Delete permanently?", "“${d.name}” is deleted from this phone for good. It skips the trash and can't be restored.", "Delete",
+                onDismiss = { confirm = null },
+                onConfirm = {
+                    act {
+                        Library.delete(d.id)
+                        Files.announce(context, d.path)
+                        toast("Deleted")
+                        removed(d.id)
+                    }
                 },
             )
         }

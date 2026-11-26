@@ -11,6 +11,8 @@ import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.PhotoLibrary
 import androidx.compose.material.icons.outlined.Slideshow
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -39,17 +41,21 @@ import app.pixelg.ui.LocalNav
 import app.pixelg.ui.ShowHidden
 import app.pixelg.ui.components.ColumnsButton
 import app.pixelg.ui.components.EmptyState
-import app.pixelg.ui.components.FolderCard
 import app.pixelg.ui.components.MediaGrid
+import app.pixelg.ui.components.SelectionBar
+import app.pixelg.ui.components.SubfolderStrip
+import app.pixelg.ui.components.rememberSelection
 import app.pixelg.ui.components.PagedMedia
 import app.pixelg.ui.components.offsetPaging
 import app.pixelg.ui.formatCount
 import app.pixelg.ui.viewer.ViewerSession
 import kotlinx.coroutines.launch
 
-private fun gcd(a: Int, b: Int): Int = if (b == 0) a else gcd(b, a % b)
-
-/** A folder: its subfolders as cards above its photos and videos, newest first. */
+/**
+ * A folder: its subfolders as a sideways strip above its photos and videos, newest
+ * first. Long-press a photo to select; pull down to rescan.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FolderScreen(id: Long) {
     val nav = LocalNav.current
@@ -59,18 +65,21 @@ fun FolderScreen(id: Long) {
     var error by remember { mutableStateOf<String?>(null) }
     var menu by remember { mutableStateOf(false) }
     val paged = remember(id) { PagedMedia(fetch = offsetPaging { o, l -> Library.folderMedia(id, o, l) }) }
+    val selection = rememberSelection()
+    var refreshing by remember { mutableStateOf(false) }
 
     LaunchedEffect(id, Engine.version) {
         runCatching { folder = Library.folder(id) }.onFailure { error = it.message }
         if (paged.loaded) paged.reload()
     }
 
-    val albumColumns = Prefs.albumColumns
     val mediaColumns = Prefs.mediaColumns
-    val gridColumns = albumColumns * mediaColumns / gcd(albumColumns, mediaColumns)
     val f = folder
 
     Scaffold(topBar = {
+        if (selection.active) {
+            SelectionBar(selection, paged, folderId = id, writable = f?.writable ?: true)
+        } else {
         AppBar(
             f?.name ?: "",
             subtitle = f?.let { formatCount(it.mediaCount, "item") + if (it.hidden != null) " · Hidden" else "" },
@@ -84,6 +93,11 @@ fun FolderScreen(id: Long) {
                 ColumnsButton(mediaColumns, listOf(2, 3, 4, 5), Prefs::setMediaColumns)
                 IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, "More") }
                 DropdownMenu(menu, { menu = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Select items") },
+                        enabled = paged.count > 0,
+                        onClick = { menu = false; selection.begin() },
+                    )
                     val hidden = f?.hidden
                     DropdownMenuItem(
                         text = { Text(if (hidden == "this") "Unhide folder" else "Hide folder") },
@@ -101,12 +115,28 @@ fun FolderScreen(id: Long) {
                 }
             },
         )
+        }
     }) { padding ->
+        // Pull down to rescan this folder (and those below it) right away.
+        PullToRefreshBox(
+            isRefreshing = refreshing,
+            onRefresh = {
+                refreshing = true
+                scope.launch {
+                    runCatching { Library.rescanFolder(id) }
+                        .onFailure { Toast.makeText(context, it.message, Toast.LENGTH_SHORT).show() }
+                    runCatching { folder = Library.folder(id) }
+                    paged.reload()
+                    Engine.changed()
+                    refreshing = false
+                }
+            },
+            modifier = Modifier.padding(padding),
+        ) {
         MediaGrid(
             paged = paged,
             columns = mediaColumns,
-            gridColumns = gridColumns,
-            modifier = Modifier.padding(padding),
+            selection = selection,
             onOpen = { ViewerSession.open(nav, paged, it, folderId = id) },
             empty = {
                 if (f != null && f.subfolders.isEmpty()) EmptyState(Icons.Outlined.PhotoLibrary, "Nothing here")
@@ -129,18 +159,16 @@ fun FolderScreen(id: Long) {
                         }
                     }
                 }
-                folder.subfolders.forEach { sub ->
-                    item(key = "sub-${sub.id}", span = { GridItemSpan(gridColumns / albumColumns) }) {
-                        FolderCard(
-                            sub.name, formatCount(sub.count, "item"), sub.cover, sub.hidden,
-                            onClick = { nav.navigate("folder/${sub.id}") },
-                        )
+                if (folder.subfolders.isNotEmpty()) {
+                    item(key = "subfolders", span = { GridItemSpan(maxLineSpan) }) {
+                        SubfolderStrip(folder.subfolders) { nav.navigate("folder/${it.id}") }
                     }
                 }
             }
             error?.let { message ->
                 item(span = { GridItemSpan(maxLineSpan) }) { Text(message, Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error) }
             }
+        }
         }
     }
 }

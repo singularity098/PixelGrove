@@ -55,6 +55,7 @@ object Api {
                 is String -> put(key, value)
                 is Boolean -> put(key, value)
                 is Number -> put(key, value)
+                is List<*> -> put(key, kotlinx.serialization.json.JsonArray(value.map { kotlinx.serialization.json.JsonPrimitive(it as Number) }))
                 else -> error("unsupported value for $key")
             }
         }

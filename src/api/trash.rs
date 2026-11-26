@@ -1,4 +1,5 @@
-//! Moving media to the trash, and the Trash page (restore, delete forever, empty).
+//! Moving media to the trash (or deleting it outright), and the Trash page (restore,
+//! delete forever, empty).
 
 use std::path::{Path, PathBuf};
 
@@ -10,6 +11,7 @@ use serde::Serialize;
 
 use super::browse::{Page, Paged};
 use super::media::{FileRef, Versioned, file_response, preview_response, visible};
+use super::organize::{BatchResult, Failure, Selection};
 use super::{ApiError, ApiResult, CurrentUser};
 use crate::auth::{Role, User};
 use crate::server::AppState;
@@ -19,7 +21,7 @@ fn move_error(err: MoveError) -> ApiError {
     match err {
         MoveError::ReadOnly => ApiError::status(
             StatusCode::CONFLICT,
-            "This folder is read-only, so PixelGrove can't move files in it. Mount it read-write to use Trash.",
+            "This folder is read-only, so PixelGrove can't change files in it. Mount it read-write to use Trash and Delete.",
         ),
         MoveError::Missing => {
             ApiError::status(StatusCode::NOT_FOUND, "The file is no longer on disk.")
@@ -34,43 +36,140 @@ pub async fn trash_media(
     UrlPath(id): UrlPath<i64>,
 ) -> ApiResult<StatusCode> {
     current.require(Role::Editor)?;
-    let user_id = current.user.id;
-    let m = visible(&state, current.user, id).await?;
-    let original = m.path();
-    let (root_id, root) = state
-        .indexer
-        .roots()
-        .into_iter()
-        .find(|(_, root)| original.starts_with(root))
-        .ok_or_else(|| ApiError::status(StatusCode::NOT_FOUND, "Not found."))?;
-    let moved_from = original.clone();
-    let result = state
-        .db
-        .run(move |conn| {
-            trash::move_to_trash(
-                conn,
-                &Trashed {
-                    root_id,
-                    root: &root,
-                    original: &original,
-                    name: &m.name,
-                    kind: &m.kind,
-                    size: m.size,
-                    mtime: m.mtime,
-                    taken_at: m.taken_at,
-                    width: m.width,
-                    height: m.height,
-                    orientation: m.orientation,
-                    duration_ms: m.duration_ms,
-                    deleted_by: user_id,
-                },
-            )
-        })
-        .await?;
-    result.map_err(move_error)?;
-    // Drop it from the index now rather than waiting for the watcher.
-    state.indexer.rescan(vec![moved_from]).await;
-    Ok(StatusCode::NO_CONTENT)
+    first(remove(&state, &current.user, vec![id], Removal::Trash).await?)
+}
+
+/// Moves a selection to the trash.
+pub async fn trash_many(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Json(selection): Json<Selection>,
+) -> ApiResult<Json<BatchResult>> {
+    current.require(Role::Editor)?;
+    let ids = selection.checked()?;
+    let results = remove(&state, &current.user, ids.clone(), Removal::Trash).await?;
+    Ok(Json(batch_result(ids, results)))
+}
+
+/// Deletes an item for good, without the trash.
+pub async fn delete_media(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    UrlPath(id): UrlPath<i64>,
+) -> ApiResult<StatusCode> {
+    current.require(Role::Editor)?;
+    first(remove(&state, &current.user, vec![id], Removal::Delete).await?)
+}
+
+/// Deletes a selection for good, without the trash.
+pub async fn delete_many(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    Json(selection): Json<Selection>,
+) -> ApiResult<Json<BatchResult>> {
+    current.require(Role::Editor)?;
+    let ids = selection.checked()?;
+    let results = remove(&state, &current.user, ids.clone(), Removal::Delete).await?;
+    Ok(Json(batch_result(ids, results)))
+}
+
+fn first(mut results: Vec<ApiResult<()>>) -> ApiResult<StatusCode> {
+    results
+        .pop()
+        .unwrap_or(Ok(()))
+        .map(|()| StatusCode::NO_CONTENT)
+}
+
+fn batch_result(ids: Vec<i64>, results: Vec<ApiResult<()>>) -> BatchResult {
+    let mut out = BatchResult::default();
+    for (id, result) in ids.into_iter().zip(results) {
+        match result {
+            Ok(()) => out.done += 1,
+            Err(err) => out.failed.push(Failure {
+                id,
+                error: err.message(),
+            }),
+        }
+    }
+    out
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Removal {
+    Trash,
+    Delete,
+}
+
+/// Trashes or deletes each item; one result per id, in order. The folders they were
+/// in are rescanned once at the end.
+async fn remove(
+    state: &AppState,
+    user: &User,
+    ids: Vec<i64>,
+    how: Removal,
+) -> ApiResult<Vec<ApiResult<()>>> {
+    let roots = state.indexer.roots();
+    let mut results = Vec::with_capacity(ids.len());
+    let mut gone = Vec::new();
+    for id in ids {
+        let m = match visible(state, user.clone(), id).await {
+            Ok(m) => m,
+            Err(err) => {
+                results.push(Err(err));
+                continue;
+            }
+        };
+        let original = m.path();
+        let Some((root_id, root)) = roots
+            .iter()
+            .find(|(_, root)| original.starts_with(root))
+            .cloned()
+        else {
+            results.push(Err(ApiError::status(StatusCode::NOT_FOUND, "Not found.")));
+            continue;
+        };
+        let path = original.clone();
+        let user_id = user.id;
+        let result = match how {
+            Removal::Trash => state
+                .db
+                .run(move |conn| {
+                    trash::move_to_trash(
+                        conn,
+                        &Trashed {
+                            root_id,
+                            root: &root,
+                            original: &path,
+                            name: &m.name,
+                            kind: &m.kind,
+                            size: m.size,
+                            mtime: m.mtime,
+                            taken_at: m.taken_at,
+                            width: m.width,
+                            height: m.height,
+                            orientation: m.orientation,
+                            duration_ms: m.duration_ms,
+                            deleted_by: user_id,
+                        },
+                    )
+                })
+                .await?
+                .map(|_| ()),
+            Removal::Delete => {
+                tokio::task::spawn_blocking(move || trash::delete_file(&path)).await??
+            }
+        };
+        match result {
+            Ok(()) => {
+                gone.push(original);
+                results.push(Ok(()));
+            }
+            Err(err) => results.push(Err(move_error(err))),
+        }
+    }
+    // Drop them from the index now rather than waiting for the watcher.
+    state.indexer.rescan(gone).await;
+    Ok(results)
 }
 
 #[derive(Serialize)]

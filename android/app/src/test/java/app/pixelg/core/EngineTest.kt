@@ -154,13 +154,15 @@ class EngineTest {
 
         // Moving keeps the favorite; copying makes a new item.
         val holiday = Library.albums("name", 0, 10).items.first { it.name == "Holiday" }
-        val moved = Library.transfer(photo.id, move = true, folderId = holiday.id, newFolder = "Day 1")
+        val moving = Library.transferMany(listOf(photo.id), move = true, folderId = holiday.id, newFolder = "Day 1")
+        assertEquals(1, moving.done)
+        val moved = moving.placed.single()
         assertNotNull(moved.id)
         assertEquals("IMG_1.jpg", moved.name)
         assertTrue(File(media, "Holiday/Day 1/IMG_1.jpg").isFile)
         assertFalse(File(media, "Camera/IMG_1.jpg").exists())
         assertTrue(Library.detail(moved.id!!).favorite)
-        val copied = Library.transfer(moved.id!!, move = false, folderId = holiday.id, newFolder = null)
+        val copied = Library.transferMany(listOf(moved.id!!), move = false, folderId = holiday.id, newFolder = null).placed.single()
         assertTrue(File(media, "Holiday/IMG_1.jpg").isFile)
         assertEquals(4L, Library.status().images)
 
@@ -186,12 +188,26 @@ class EngineTest {
         Library.emptyTrash()
         assertEquals(0L, Library.trashList(0, 10).total)
 
+        // Items that can't be moved are reported one by one; an unknown folder fails the lot.
+        val missing = Library.transferMany(listOf(999_999), true, holiday.id, null)
+        assertEquals(0, missing.done)
+        assertEquals(999_999L, missing.failed.single().id)
         try {
-            Library.transfer(999_999, true, holiday.id, null)
+            Library.transferMany(listOf(moved.id!!), true, 999_999, null)
             error("expected an error")
         } catch (e: ApiException) {
             assertEquals(404, e.status)
         }
+
+        // Delete skips the trash; a folder rescan picks up a file written behind its back.
+        assertTrue(Library.detail(copied.id!!).writable)
+        val deleted = Library.removeMany(listOf(copied.id!!), forever = true)
+        assertEquals(1, deleted.done)
+        assertFalse(File(media, "Holiday/IMG_1.jpg").exists())
+        assertEquals(0L, Library.trashList(0, 10).total)
+        File(media, "Holiday/IMG_1.jpg").writeBytes(File(media, "Holiday/Day 1/IMG_1.jpg").readBytes())
+        Library.rescanFolder(holiday.id)
+        assertTrue(Library.folderMedia(holiday.id, 0, 10).items.any { it.name == "IMG_1.jpg" })
     }
 
     @Test

@@ -28,6 +28,8 @@ pub struct TreeFolder {
     /// Shown only because "show hidden" is on.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     hidden: bool,
+    /// Whether files can be copied or moved into it (false on read-only mounts).
+    writable: bool,
 }
 
 /// A folder in the tree, counting only what `user` sees (or `None` if it's hidden).
@@ -67,6 +69,7 @@ fn tree_folder(conn: &Connection, user: &User, id: i64) -> anyhow::Result<Option
         id: folder.id,
         name: super::browse::display_name(&folder),
         hidden: user.hidden.marks_folder(&folder.path),
+        writable: super::organize::is_writable(Path::new(&folder.path)),
         path: relative(&folder.path, &folder.root),
         media_count,
         total_count,

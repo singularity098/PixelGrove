@@ -3,7 +3,8 @@
 use std::path::{Path, PathBuf};
 
 use axum::Json;
-use axum::extract::State;
+use axum::extract::{Path as UrlPath, State};
+use axum::http::StatusCode;
 use serde::Serialize;
 
 use super::{ApiResult, CurrentUser};
@@ -15,6 +16,9 @@ pub struct LibraryStatus {
     folders: i64,
     images: i64,
     videos: i64,
+    /// Whether any of the user's folders can take new files (copies need one); false
+    /// when every media folder is mounted read-only.
+    writable: bool,
     #[serde(flatten)]
     index: IndexStatus,
 }
@@ -24,6 +28,11 @@ pub async fn status(
     current: CurrentUser,
 ) -> ApiResult<Json<LibraryStatus>> {
     let user = current.user;
+    let tops: Vec<PathBuf> = if user.folders.is_empty() {
+        state.indexer.roots().into_iter().map(|(_, p)| p).collect()
+    } else {
+        user.folders.iter().map(PathBuf::from).collect()
+    };
     let (folders, images, videos) = state
         .db
         .run(move |conn| {
@@ -43,12 +52,33 @@ pub async fn status(
             )?)
         })
         .await?;
+    let writable =
+        tokio::task::spawn_blocking(move || tops.iter().any(|p| super::organize::is_writable(p)))
+            .await?;
     Ok(Json(LibraryStatus {
         folders,
         images,
         videos,
+        writable,
         index: state.indexer.status(),
     }))
+}
+
+/// Rescans one folder and everything below it, and answers once that's done, so the
+/// client can reload straight away (Rescan, and pull to refresh on phones). Anyone who
+/// can see the folder may ask: it only does what the file watcher would.
+pub async fn rescan_folder(
+    State(state): State<AppState>,
+    current: CurrentUser,
+    UrlPath(id): UrlPath<i64>,
+) -> ApiResult<StatusCode> {
+    let user = current.user;
+    let path = state
+        .db
+        .run(move |conn| Ok(super::browse::visible_folder(conn, &user, id).map(|f| f.path)))
+        .await??;
+    state.indexer.rescan(vec![PathBuf::from(path)]).await;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Serialize)]

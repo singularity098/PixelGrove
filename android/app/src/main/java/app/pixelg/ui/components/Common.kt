@@ -43,7 +43,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import app.pixelg.core.Library
-import app.pixelg.core.Placed
+import app.pixelg.core.BatchResult
 import app.pixelg.core.TreeFolder
 import kotlinx.coroutines.launch
 
@@ -81,16 +81,18 @@ fun ColumnsButton(current: Int, choices: List<Int>, onChange: (Int) -> Unit) {
 }
 
 /**
- * Copy or move a photo or video into another folder of the library: browse the folder
- * tree, optionally name a new folder inside the one picked.
+ * Picks where to copy or move photos and videos: browse the folder tree, optionally
+ * name a new folder inside the one picked. Read-only folders can be opened but not
+ * picked.
  */
 @Composable
 fun FolderPickerDialog(
-    name: String,
+    title: String,
+    move: Boolean,
     currentFolderId: Long?,
     onDismiss: () -> Unit,
-    onPick: suspend (move: Boolean, folderId: Long, newFolder: String?) -> Placed,
-    onDone: (move: Boolean, placed: Placed, folderName: String) -> Unit,
+    onPick: suspend (folderId: Long, newFolder: String?) -> BatchResult,
+    onDone: (result: BatchResult, folderName: String) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
     val trail = remember { mutableStateListOf<TreeFolder>() }
@@ -107,15 +109,15 @@ fun FolderPickerDialog(
         }.getOrElse { error = it.message; emptyList() }
     }
 
-    fun run(move: Boolean) {
+    fun run() {
         val target = here ?: return
         busy = true
         error = null
         scope.launch {
             try {
-                val placed = onPick(move, target.id, newFolder.trim().ifEmpty { null })
+                val result = onPick(target.id, newFolder.trim().ifEmpty { null })
                 val folderName = if (newFolder.isBlank()) target.name else "${target.name}/${newFolder.trim()}"
-                onDone(move, placed, folderName)
+                onDone(result, folderName)
             } catch (e: Exception) {
                 error = e.message
             } finally {
@@ -126,7 +128,7 @@ fun FolderPickerDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Copy or move “$name”", maxLines = 2) },
+        title = { Text(title, maxLines = 2) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(Modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
@@ -151,8 +153,13 @@ fun FolderPickerDialog(
                         ) {
                             Icon(Icons.Outlined.Folder, null, Modifier.size(20.dp))
                             Text(
-                                folder.name + if (folder.id == currentFolderId) " (current)" else "",
+                                folder.name + when {
+                                    folder.id == currentFolderId -> " (current)"
+                                    !folder.writable -> " (read-only)"
+                                    else -> ""
+                                },
                                 Modifier.weight(1f).padding(start = 12.dp),
+                                color = if (folder.writable) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                             if (folder.subfolderCount > 0) Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null)
                         }
@@ -167,26 +174,23 @@ fun FolderPickerDialog(
                     }
                 }
                 HorizontalDivider()
-                if (here != null) {
-                    OutlinedTextField(
+                when {
+                    here == null -> Text("Open the folder to ${if (move) "move" else "copy"} into.", style = MaterialTheme.typography.bodySmall)
+                    !here.writable -> Text("“${here.name}” is read-only. Open another folder.", style = MaterialTheme.typography.bodySmall)
+                    else -> OutlinedTextField(
                         newFolder, { newFolder = it }, singleLine = true,
                         label = { Text("New folder inside “${here.name}” (optional)") },
                         modifier = Modifier.fillMaxWidth(),
                     )
-                } else {
-                    Text("Open the folder to copy or move it into.", style = MaterialTheme.typography.bodySmall)
                 }
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
         },
         confirmButton = {
-            Row {
-                TextButton(onClick = { run(false) }, enabled = here != null && !busy) { Text("Copy here") }
-                TextButton(
-                    onClick = { run(true) },
-                    enabled = here != null && !busy && !(here.id == currentFolderId && newFolder.isBlank()),
-                ) { Text("Move here") }
-            }
+            TextButton(
+                onClick = { run() },
+                enabled = here != null && here.writable && !busy && !(move && here.id == currentFolderId && newFolder.isBlank()),
+            ) { Text(if (move) "Move here" else "Copy here") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )

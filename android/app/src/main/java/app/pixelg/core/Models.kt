@@ -49,6 +49,8 @@ data class FolderDetail(
     val breadcrumbs: List<Crumb>,
     val hidden: String? = null,
     val subfolders: List<Subfolder>,
+    /** False on read-only storage: nothing in it can be moved, trashed or deleted. */
+    val writable: Boolean = true,
 )
 
 @Serializable
@@ -91,6 +93,8 @@ data class MediaDetail(
     val description: String? = null,
     val favorite: Boolean = false,
     val hidden: String? = null,
+    /** Its folder can be changed (move, trash, delete). */
+    val writable: Boolean = true,
     val v: Long = 0,
 )
 
@@ -174,6 +178,8 @@ data class TreeFolder(
     @SerialName("subfolder_count") val subfolderCount: Long,
     @SerialName("latest_taken_at") val latestTakenAt: Long? = null,
     val hidden: Boolean = false,
+    /** False on read-only storage: nothing can be copied or moved into it. */
+    val writable: Boolean = true,
 )
 
 @Serializable
@@ -192,6 +198,8 @@ data class LibraryStatus(
     val videos: Long,
     val scanning: Boolean,
     val watching: Boolean,
+    /** Whether any media folder can take new files (copies need one). */
+    val writable: Boolean = true,
     @SerialName("last_full_scan_at") val lastFullScanAt: Long? = null,
     @SerialName("last_full_scan") val lastFullScan: ScanStats? = null,
 )
@@ -220,6 +228,13 @@ data class Me(val id: Long, val username: String, val role: String, @SerialName(
 
 @Serializable
 data class Placed(val id: Long? = null, val name: String, @SerialName("folder_id") val folderId: Long? = null)
+
+@Serializable
+data class Failure(val id: Long, val error: String)
+
+/** What a copy, move, trash or delete of a selection did. */
+@Serializable
+data class BatchResult(val done: Int, val placed: List<Placed> = emptyList(), val failed: List<Failure> = emptyList())
 
 /** A geotagged item on the map: `[id, lat, lon, taken_at, v, is_video]`. */
 data class MapPoint(val id: Long, val lat: Double, val lon: Double, val takenAt: Long, val v: Long, val video: Boolean)
@@ -271,10 +286,23 @@ object Library {
 
     suspend fun trash(id: Long) = Api.call("POST", "/media/$id/trash")
 
-    suspend fun transfer(id: Long, move: Boolean, folderId: Long, newFolder: String?) = Api.send<Placed>(
-        "POST", "/media/$id/${if (move) "move" else "copy"}",
-        Api.obj("folder_id" to folderId, "new_folder" to newFolder?.takeIf { it.isNotBlank() }),
+    suspend fun delete(id: Long) = Api.call("DELETE", "/media/$id")
+
+    /** Copies or moves a selection; one rescan for the lot. */
+    suspend fun transferMany(ids: List<Long>, move: Boolean, folderId: Long, newFolder: String?) = Api.send<BatchResult>(
+        "POST", "/media/${if (move) "move" else "copy"}",
+        Api.obj("ids" to ids, "folder_id" to folderId, "new_folder" to newFolder?.takeIf { it.isNotBlank() }),
     )
+
+    /** Moves a selection to the trash, or (`forever`) deletes it outright. */
+    suspend fun removeMany(ids: List<Long>, forever: Boolean) = Api.send<BatchResult>(
+        "POST", "/media/${if (forever) "delete" else "trash"}", Api.obj("ids" to ids),
+    )
+
+    /** Rescans a folder and everything below it; returns once that's done. */
+    suspend fun rescanFolder(id: Long) = Api.call("POST", "/folders/$id/rescan")
+
+    suspend fun rescanAll() = Api.call("POST", "/library/rescan")
 
     suspend fun trashList(offset: Int, limit: Int) = Api.get<Paged<TrashEntry>>("/trash?offset=$offset&limit=$limit")
 

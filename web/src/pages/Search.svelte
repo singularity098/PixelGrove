@@ -6,11 +6,17 @@
   import { openViewer } from '../lib/query';
   import { link, onVisible } from '../lib/router.svelte';
   import { SearchResults } from '../lib/search.svelte';
+  import SelectButton from '../components/SelectButton.svelte';
+  import SelectionBar from '../components/SelectionBar.svelte';
+  import { Selection } from '../lib/selection.svelte';
+  import { session } from '../lib/session.svelte';
 
   let { query }: { query: string } = $props();
   // The page is keyed on the query, so this is created once per search.
   // svelte-ignore state_referenced_locally
   const results = new SearchResults(query);
+  const selection = new Selection();
+  const canEdit = $derived(session.current.status === 'signed-in' && session.current.user.role !== 'viewer');
 </script>
 
 <section class="page wide">
@@ -38,8 +44,11 @@
   {/if}
 
   {#if results.items.length}
-    <h3>Photos and videos</h3>
-    <MediaGrid items={results.items} onopen={(i) => openViewer(results.items[i].id)} />
+    <div class="heading">
+      <h3>Photos and videos</h3>
+      {#if canEdit}<SelectButton {selection} />{/if}
+    </div>
+    <MediaGrid items={results.items} onopen={(i) => openViewer(results.items[i].id)} selection={canEdit ? selection : undefined} />
     <MoreSpace list={results} />
   {:else if results.total === 0 && !results.folders.length}
     <p class="muted">Nothing matched. Search looks in folder and file names, dates (like 2023-07), cameras, lenses and descriptions.</p>
@@ -49,8 +58,16 @@
 </section>
 
 <MediaViewerHost source={results} />
+{#if canEdit}<SelectionBar {selection} source={results} />{/if}
 
 <style>
+  .heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
   h3 {
     margin: 20px 0 10px;
     font-size: 1rem;
@@ -68,7 +85,6 @@
     gap: 12px;
     padding: 8px;
     border: 1px solid var(--border);
-    border-radius: 12px;
     background: var(--surface);
     color: var(--text);
     text-decoration: none;
@@ -82,7 +98,6 @@
   .cover {
     width: 52px;
     height: 52px;
-    border-radius: 8px;
     overflow: hidden;
     flex: none;
   }

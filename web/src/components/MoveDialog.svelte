@@ -1,31 +1,37 @@
+<script lang="ts" module>
+  export interface TransferResult {
+    mode: 'copy' | 'move';
+    /** Ids that were copied or moved (moved ones are gone from where they were). */
+    done: number[];
+    failed: { id: number; error: string }[];
+    /** Where they went, for the message. */
+    folder: string;
+  }
+</script>
+
 <script lang="ts">
   import { get, post } from '../lib/api';
+  import type { TreeFolder } from '../lib/media.svelte';
   import Icon from './Icon.svelte';
 
   /**
-   * Copies or moves a photo or video into another folder of the library, picked from
+   * Copies or moves photos and videos into another folder of the library, picked from
    * the folder tree (optionally into a new folder made inside it).
    */
   let {
-    item,
+    mode,
+    items,
     folderId,
     onclose,
     ondone,
   }: {
-    item: { id: number; name: string };
-    /** The folder it's in now, where browsing starts. */
+    mode: 'copy' | 'move';
+    items: { id: number; name: string }[];
+    /** The folder they're in now, if they share one (marked in the list). */
     folderId: number | null;
     onclose: () => void;
-    /** After a move (`moved`) or copy, with the item's new id. */
-    ondone: (result: { moved: boolean; id: number | null; folder: string }) => void;
+    ondone: (result: TransferResult) => void;
   } = $props();
-
-  interface TreeFolder {
-    id: number;
-    name: string;
-    path: string;
-    subfolder_count: number;
-  }
 
   let dialog: HTMLDialogElement | undefined = $state();
   /** The folders opened so far, top first; the last is where it goes. */
@@ -35,6 +41,9 @@
   let error = $state('');
   let busy = $state(false);
   const here = $derived(trail.at(-1) ?? null);
+  const what = $derived(items.length === 1 ? `“${items[0].name}”` : `${items.length.toLocaleString()} items`);
+  const verb = $derived(mode === 'copy' ? 'Copy' : 'Move');
+  const sameFolder = $derived(mode === 'move' && here?.id === folderId && !newFolder.trim());
 
   $effect(() => {
     dialog?.showModal();
@@ -56,17 +65,25 @@
     onclose();
   }
 
-  async function run(mode: 'copy' | 'move') {
+  async function run() {
     if (!here) return;
     busy = true;
     error = '';
     try {
-      const result = await post<{ id: number | null; name: string }>(`/media/${item.id}/${mode}`, {
+      const ids = items.map((i) => i.id);
+      const result = await post<{ placed?: unknown[]; failed: { id: number; error: string }[] }>(`/media/${mode}`, {
+        ids,
         folder_id: here.id,
         new_folder: newFolder.trim() || undefined,
       });
+      const failedIds = new Set(result.failed.map((f) => f.id));
+      if (failedIds.size === ids.length) {
+        // Nothing worked: say why here and let them pick another folder.
+        error = result.failed[0]?.error ?? 'Something went wrong.';
+        return;
+      }
       const folder = newFolder.trim() ? `${here.name}/${newFolder.trim()}` : here.name;
-      ondone({ moved: mode === 'move', id: result.id, folder });
+      ondone({ mode, done: ids.filter((id) => !failedIds.has(id)), failed: result.failed, folder });
       close();
     } catch (e) {
       error = (e as Error).message;
@@ -77,7 +94,7 @@
 </script>
 
 <dialog bind:this={dialog} onclose={onclose} onkeydown={(e) => e.stopPropagation()}>
-  <h3>Copy or move “{item.name}”</h3>
+  <h3>{verb} {what} to…</h3>
   <nav class="trail" aria-label="Folder">
     <button type="button" class="crumb" onclick={() => (trail = [])} disabled={!here}>Library</button>
     {#each trail as folder, i (folder.id)}
@@ -90,7 +107,7 @@
   <ul class="folders">
     {#each folders as folder (folder.id)}
       <li>
-        <button type="button" onclick={() => (trail = [...trail, folder])} class:current={folder.id === folderId}>
+        <button type="button" onclick={() => (trail = [...trail, folder])} class:current={folder.id === folderId} class:read-only={!folder.writable}>
           <Icon name="folder" size={18} />
           <span class="name">{folder.name}</span>
           {#if folder.subfolder_count > 0}<Icon name="right" size={16} />{/if}
@@ -100,20 +117,21 @@
       <li class="muted small empty">No folders inside.</li>
     {/each}
   </ul>
-  {#if here}
+  {#if here && !here.writable}
+    <p class="muted small">“{here.name}” is read-only, so nothing can be put in it. Open another folder.</p>
+  {:else if here}
     <label>
       New folder inside “{here.name}” (optional)
       <input bind:value={newFolder} placeholder="Leave empty to use “{here.name}”" maxlength="255" />
     </label>
   {:else}
-    <p class="muted small">Open the folder to copy or move it into.</p>
+    <p class="muted small">Open the folder to {mode} {items.length === 1 ? 'it' : 'them'} into.</p>
   {/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   <div class="dialog-actions">
     <button type="button" class="ghost" onclick={close}>Cancel</button>
-    <button type="button" class="ghost" disabled={!here || busy} onclick={() => run('copy')}>Copy here</button>
-    <button type="button" class="primary" disabled={!here || busy || (here.id === folderId && !newFolder.trim())} onclick={() => run('move')}>
-      Move here
+    <button type="button" class="primary" disabled={!here || !here.writable || busy || sameFolder} onclick={run}>
+      {busy ? `${mode === 'copy' ? 'Copying' : 'Moving'}…` : `${verb} here`}
     </button>
   </div>
 </dialog>
@@ -190,6 +208,11 @@
 
   .folders button.current .name::after {
     content: ' (current)';
+    color: var(--text-muted);
+  }
+
+  .folders button.read-only .name::after {
+    content: ' (read-only)';
     color: var(--text-muted);
   }
 
