@@ -1,26 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Themed (monochrome) icon: the blades in shades of one colour. -->
+<!-- Themed (monochrome) icon: the stacked layers in shades of one colour, with the
+     picture on the top layer cut out. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
-    <group android:scaleX="0.5405" android:scaleY="0.5405" android:translateX="19.405" android:translateY="19.405">
-        <path android:pathData="M64,10A54,54 0 1,1 64,118A54,54 0 1,1 64,10Z" android:strokeColor="#FFFFFFFF" android:strokeWidth="5"/>
-        <group android:rotation="0" android:pivotX="64" android:pivotY="64">
-            <path android:pathData="M64,64Q50,40 64,14A50,50 0 0,1 107.3,39Q77.8,39.9 64,64Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.55"/>
-        </group>
-        <group android:rotation="60" android:pivotX="64" android:pivotY="64">
-            <path android:pathData="M64,64Q50,40 64,14A50,50 0 0,1 107.3,39Q77.8,39.9 64,64Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.8"/>
-        </group>
-        <group android:rotation="120" android:pivotX="64" android:pivotY="64">
-            <path android:pathData="M64,64Q50,40 64,14A50,50 0 0,1 107.3,39Q77.8,39.9 64,64Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.55"/>
-        </group>
-        <group android:rotation="180" android:pivotX="64" android:pivotY="64">
-            <path android:pathData="M64,64Q50,40 64,14A50,50 0 0,1 107.3,39Q77.8,39.9 64,64Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.85"/>
-        </group>
-        <group android:rotation="240" android:pivotX="64" android:pivotY="64">
-            <path android:pathData="M64,64Q50,40 64,14A50,50 0 0,1 107.3,39Q77.8,39.9 64,64Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.7"/>
-        </group>
-        <group android:rotation="300" android:pivotX="64" android:pivotY="64">
-            <path android:pathData="M64,64Q50,40 64,14A50,50 0 0,1 107.3,39Q77.8,39.9 64,64Z" android:fillColor="#FFFFFFFF" android:fillAlpha="1.0"/>
-        </group>
-    </group>
+    <path android:pathData="M54,54L80,67L54,80L28,67Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.35"/>
+    <path android:pathData="M54,51L80,64L54,77L28,64Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.5"/>
+    <path android:pathData="M54,45L80,58L54,71L28,58Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.55"/>
+    <path android:pathData="M54,42L80,55L54,68L28,55Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.7"/>
+    <path android:pathData="M54,36L80,49L54,62L28,49Z" android:fillColor="#FFFFFFFF" android:fillAlpha="0.8"/>
+    <!-- Top layer minus the sun and the mountains (even-odd holes). -->
+    <path android:fillType="evenOdd" android:fillColor="#FFFFFFFF"
+        android:pathData="M54,33L80,46L54,59L28,46Z M56.6,38.72A3.38,3.38 0 1,0 56.6,45.48A3.38,3.38 0 1,0 56.6,38.72Z M54,59L37.43,50.71L45.16,43.92L59.2,52.76L67.52,47.56L71.68,50.16Z"/>
 </vector>

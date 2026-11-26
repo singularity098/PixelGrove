@@ -96,5 +96,5 @@ app/src/main/java/app/pixelg/
                      MediaSync (MediaStore generations), Files (camera, share, edit), Prefs
   thumbs/            Thumbnail loading: engine → platform decoders → memory LRU
   ui/                App shell (drawer, top bar), screens/, viewer/, components/, theme/
-app/src/main/res/    Icon (the leaf aperture, as adaptive-icon vectors)
+app/src/main/res/    Icon (the blue layers, as adaptive-icon vectors)
 ```

@@ -9,7 +9,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import app.pixelg.core.Prefs
 
-/** PixelGrove's nine themes (web/src/app.css), plus following the system. */
+/**
+ * PixelGrove's nine themes (web/src/app.css), plus following the system. Dark, Light and
+ * AMOLED use blue instead of the web UI's green, to match PixelG's blue icon.
+ */
 data class Palette(
     val id: String,
     val label: String,
@@ -26,9 +29,9 @@ data class Palette(
 )
 
 val palettes = listOf(
-    Palette("dark", "Dark", true, 0xFF0F1113, 0xFF181B1F, 0xFF22262B, 0xFF2C3137, 0xFFE8EAED, 0xFF9AA0A6, 0xFF4FC184, 0xFF06140C, 0xFFF28B82),
-    Palette("light", "Light", false, 0xFFF7F8F9, 0xFFFFFFFF, 0xFFEEF0F2, 0xFFDDE1E5, 0xFF1B1F23, 0xFF5F6670, 0xFF1F8A55, 0xFFFFFFFF, 0xFFC5221F),
-    Palette("amoled", "AMOLED black", true, 0xFF000000, 0xFF0A0A0A, 0xFF161616, 0xFF262626, 0xFFE8E8E8, 0xFF8F8F8F, 0xFF4FC184, 0xFF000000, 0xFFFF6B6B),
+    Palette("dark", "Dark", true, 0xFF0F1113, 0xFF181B1F, 0xFF22262B, 0xFF2C3137, 0xFFE8EAED, 0xFF9AA0A6, 0xFF5CB0F5, 0xFF06121F, 0xFFF28B82),
+    Palette("light", "Light", false, 0xFFF7F8F9, 0xFFFFFFFF, 0xFFEEF0F2, 0xFFDDE1E5, 0xFF1B1F23, 0xFF5F6670, 0xFF2A72BF, 0xFFFFFFFF, 0xFFC5221F),
+    Palette("amoled", "AMOLED black", true, 0xFF000000, 0xFF0A0A0A, 0xFF161616, 0xFF262626, 0xFFE8E8E8, 0xFF8F8F8F, 0xFF5CB0F5, 0xFF000000, 0xFFFF6B6B),
     Palette("dracula", "Dracula", true, 0xFF21222C, 0xFF282A36, 0xFF343746, 0xFF44475A, 0xFFF8F8F2, 0xFFA4ABCD, 0xFFBD93F9, 0xFF21222C, 0xFFFF5555),
     Palette("tokyo-night", "Tokyo Night", true, 0xFF1A1B26, 0xFF1F2335, 0xFF292E42, 0xFF3B4261, 0xFFC0CAF5, 0xFF9AA5CE, 0xFF7AA2F7, 0xFF1A1B26, 0xFFF7768E),
     Palette("catppuccin-mocha", "Catppuccin Mocha", true, 0xFF181825, 0xFF1E1E2E, 0xFF313244, 0xFF45475A, 0xFFCDD6F4, 0xFFA6ADC8, 0xFFCBA6F7, 0xFF11111B, 0xFFF38BA8),

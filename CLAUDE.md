@@ -142,9 +142,12 @@ cd web && npm ci && npm run check && npm run build   # check = svelte-check --fa
 - Svelte: runes (`$state`, `$derived`, `$effect`), no stores. Per-device preferences in
   `localStorage`, always wrapped in try/catch. Colours come from theme CSS variables in
   `app.css` (`[data-theme]`, `[data-mode]`); there are nine themes.
-- The logo is the leaf-aperture icon (`favicon.svg`) plus the "PixelGrove" wordmark in
-  Syne Bold, converted to outlines in `components/Logo.svelte` so no font ships. If the
-  icon changes, re-render the PNG icons from it and rebuild `docs/logo-*.svg`.
+- The logo is the emerald layers icon (`favicon.svg`, drawn on a 108-unit adaptive-icon
+  grid) plus the "PixelGrove" wordmark in Syne Bold, converted to outlines in
+  `components/Logo.svelte` so no font ships. If the icon changes, run
+  `node scripts/make-icons.mjs` (re-renders the PNG icons and `docs/logo-*.svg`).
+  PixelG uses the same icon in blue (`android/app/src/main/res/drawable/`), and its
+  Dark/Light/AMOLED themes use a blue accent instead of the web UI's green.
 - The CSP forbids inline scripts; anything that must run before paint lives in
   `web/public/theme-init.js`.
 - Tests sit next to the code (`#[cfg(test)]`); API tests use `TestApp` in `api/mod.rs`.

@@ -1,5 +1,5 @@
 <script lang="ts">
-  // The leaf-aperture icon and the "PixelGrove" wordmark. The wordmark is Syne Bold
+  // The layers icon and the "PixelGrove" wordmark. The wordmark is Syne Bold
   // converted to outlines, so the UI ships no font file for it; "Pixel" follows the
   // theme's text colour and "Grove" stays brand green.
   let { icon = 28, text = 15 }: { icon?: number; text?: number } = $props();
