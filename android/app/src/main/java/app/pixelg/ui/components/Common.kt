@@ -1,6 +1,8 @@
 package app.pixelg.ui.components
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +18,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.CreateNewFolder
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material3.AlertDialog
@@ -38,8 +41,12 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import app.pixelg.core.Library
@@ -81,9 +88,10 @@ fun ColumnsButton(current: Int, choices: List<Int>, onChange: (Int) -> Unit) {
 }
 
 /**
- * Picks where to copy or move photos and videos: browse the folder tree, optionally
- * name a new folder inside the one picked. Read-only folders can be opened but not
- * picked.
+ * Picks where to copy or move photos and videos: browse the folder tree. "New folder"
+ * adds folders that don't exist yet (inside each other, if wanted); they're made only
+ * when the copy or move runs, so cancelling leaves nothing behind. Read-only folders
+ * can be opened but not picked.
  */
 @Composable
 fun FolderPickerDialog(
@@ -97,10 +105,39 @@ fun FolderPickerDialog(
     val scope = rememberCoroutineScope()
     val trail = remember { mutableStateListOf<TreeFolder>() }
     var folders by remember { mutableStateOf<List<TreeFolder>>(emptyList()) }
-    var newFolder by remember { mutableStateOf("") }
+    // New folders opened inside `here`, outermost first; made when the move runs.
+    val pending = remember { mutableStateListOf<String>() }
+    // The name being typed for a new folder, or null when not naming one.
+    var naming by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     val here = trail.lastOrNull()
+
+    fun open(to: List<TreeFolder>) {
+        if (to != trail.toList()) {
+            trail.clear()
+            trail.addAll(to)
+        }
+        pending.clear()
+        naming = null
+    }
+
+    // Opens the new folder being named (or the existing one, if the name is taken).
+    fun addFolder() {
+        val name = naming.orEmpty().trim()
+        if (name.isEmpty()) {
+            naming = null
+            return
+        }
+        if (name.startsWith('.') || name.contains('/') || name.contains('\\')) {
+            error = "Folder names can't start with a dot or contain slashes."
+            return
+        }
+        val existing = if (pending.isEmpty()) folders.find { it.name == name } else null
+        naming = null
+        error = null
+        if (existing != null) open(trail + existing) else pending.add(name)
+    }
 
     LaunchedEffect(here?.id) {
         error = null
@@ -115,8 +152,8 @@ fun FolderPickerDialog(
         error = null
         scope.launch {
             try {
-                val result = onPick(target.id, newFolder.trim().ifEmpty { null })
-                val folderName = if (newFolder.isBlank()) target.name else "${target.name}/${newFolder.trim()}"
+                val result = onPick(target.id, pending.joinToString("/").ifEmpty { null })
+                val folderName = (listOf(target.name) + pending).joinToString("/")
                 onDone(result, folderName)
             } catch (e: Exception) {
                 error = e.message
@@ -132,22 +169,29 @@ fun FolderPickerDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(Modifier.horizontalScroll(rememberScrollState()), verticalAlignment = Alignment.CenterVertically) {
-                    TextButton(onClick = { trail.clear() }, enabled = here != null) { Text("Library") }
+                    TextButton(onClick = { open(emptyList()) }, enabled = here != null) { Text("Library") }
                     trail.forEachIndexed { i, folder ->
                         Text("/", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         TextButton(
-                            onClick = { while (trail.size > i + 1) trail.removeAt(trail.lastIndex) },
-                            enabled = i < trail.lastIndex,
+                            onClick = { open(trail.take(i + 1)) },
+                            enabled = i < trail.lastIndex || pending.isNotEmpty(),
                         ) { Text(folder.name) }
+                    }
+                    pending.forEachIndexed { i, name ->
+                        Text("/", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        TextButton(
+                            onClick = { while (pending.size > i + 1) pending.removeAt(pending.lastIndex) },
+                            enabled = i < pending.lastIndex,
+                        ) { Text(name, fontStyle = FontStyle.Italic) }
                     }
                 }
                 HorizontalDivider()
                 LazyColumn(Modifier.fillMaxWidth().heightIn(max = 280.dp)) {
-                    items(folders, key = { it.id }) { folder ->
+                    items(if (pending.isEmpty()) folders else emptyList(), key = { it.id }) { folder ->
                         Row(
                             Modifier
                                 .fillMaxWidth()
-                                .clickable { trail.add(folder); newFolder = "" }
+                                .clickable { open(trail + folder) }
                                 .padding(vertical = 10.dp, horizontal = 4.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -164,7 +208,36 @@ fun FolderPickerDialog(
                             if (folder.subfolderCount > 0) Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null)
                         }
                     }
-                    if (folders.isEmpty()) {
+                    if (here?.writable == true) {
+                        item(key = "new") {
+                            val name = naming
+                            if (name == null) {
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clickable { naming = ""; error = null }
+                                        .padding(vertical = 10.dp, horizontal = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Icon(Icons.Outlined.CreateNewFolder, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+                                    Text("New folder", Modifier.padding(start = 12.dp), color = MaterialTheme.colorScheme.primary)
+                                }
+                            } else {
+                                val focus = remember { FocusRequester() }
+                                LaunchedEffect(Unit) { focus.requestFocus() }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    OutlinedTextField(
+                                        name, { naming = it }, singleLine = true,
+                                        label = { Text("Folder name") },
+                                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                        keyboardActions = KeyboardActions(onDone = { addFolder() }),
+                                        modifier = Modifier.weight(1f).focusRequester(focus),
+                                    )
+                                    TextButton(onClick = { addFolder() }) { Text("Create") }
+                                }
+                            }
+                        }
+                    } else if (folders.isEmpty()) {
                         item {
                             Text(
                                 "No folders inside.", style = MaterialTheme.typography.bodySmall,
@@ -177,11 +250,11 @@ fun FolderPickerDialog(
                 when {
                     here == null -> Text("Open the folder to ${if (move) "move" else "copy"} into.", style = MaterialTheme.typography.bodySmall)
                     !here.writable -> Text("“${here.name}” is read-only. Open another folder.", style = MaterialTheme.typography.bodySmall)
-                    else -> OutlinedTextField(
-                        newFolder, { newFolder = it }, singleLine = true,
-                        label = { Text("New folder inside “${here.name}” (optional)") },
-                        modifier = Modifier.fillMaxWidth(),
+                    pending.isNotEmpty() -> Text(
+                        "“${pending.last()}” will be made when you ${if (move) "move" else "copy"} here.",
+                        style = MaterialTheme.typography.bodySmall,
                     )
+                    else -> {}
                 }
                 error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             }
@@ -189,7 +262,7 @@ fun FolderPickerDialog(
         confirmButton = {
             TextButton(
                 onClick = { run() },
-                enabled = here != null && here.writable && !busy && !(move && here.id == currentFolderId && newFolder.isBlank()),
+                enabled = here != null && here.writable && !busy && !(move && here.id == currentFolderId && pending.isEmpty()),
             ) { Text(if (move) "Move here" else "Copy here") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },

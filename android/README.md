@@ -21,7 +21,7 @@ cache). Plus, on the phone:
 - **Camera** button in the top bar, which opens the phone's camera app.
 - **Edit** in the viewer opens the photo or video in another app's editor.
 - **Copy to folder…** and **Move to folder…** in the viewer menu (also in the web UI),
-  optionally into a new folder. Favorites, hidden marks and share links follow a moved
+  optionally into new folders made from the picker. Favorites, hidden marks and share links follow a moved
   item. **Move to trash**, or **Delete permanently** (skipping the trash).
 - **Long-press** a photo to select several: copy, move, trash or delete them together.
 - **Pull down** on Photos or a folder to rescan it right away.

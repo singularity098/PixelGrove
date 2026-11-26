@@ -95,7 +95,9 @@ only where the browser shows it). Browse API calls take 1–4 ms at 100k files.
   details, from one `access(2)` call).
 - **Copy / move** to another folder of the library (editors and admins): keeps the mtime,
   picks a free name, and a move carries favorites, hidden marks and share links over to the
-  new entry. Copy is greyed out when no media folder is writable, move when the item's
+  new entry. The picker's "New folder" queues new folders (nestable) that the request
+  names in `new_folder` (`a/b/c`, each part a plain name); they're created only when the
+  copy/move runs. Copy is greyed out when no media folder is writable, move when the item's
   folder isn't. No other edits (no rotate/rename/upload).
 - **Selections:** `POST /api/media/{copy,move,trash,delete}` take `{ids}` (up to 10,000)
   and answer `{done, placed, failed}`; the folders involved are rescanned once per batch,

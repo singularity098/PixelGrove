@@ -22,7 +22,8 @@ pub const MAX_BATCH: usize = 10_000;
 pub struct Destination {
     /// The folder to copy or move into.
     folder_id: i64,
-    /// Optionally, a new folder to create inside it and use instead.
+    /// Optionally, a new folder to create inside it and use instead: one name, or a
+    /// few separated by `/` for folders inside new folders.
     #[serde(default)]
     new_folder: Option<String>,
 }
@@ -133,6 +134,9 @@ pub async fn move_many(
     many(state, current, to, Mode::Move).await.map(Json)
 }
 
+/// The most new folders one copy or move may make inside each other.
+const MAX_NEW_DEPTH: usize = 16;
+
 /// A name for a new folder: one path component, not hidden (the scanner skips those).
 fn clean_folder_name(name: &str) -> Result<&str, ApiError> {
     let name = name.trim();
@@ -225,8 +229,16 @@ async fn destination(
         return Err(not_found());
     }
     let mut dir = PathBuf::from(&folder_path);
-    if let Some(name) = new_folder.filter(|n| !n.trim().is_empty()) {
-        dir.push(clean_folder_name(name)?);
+    if let Some(names) = new_folder.filter(|n| !n.trim().is_empty()) {
+        let names: Vec<&str> = names.split('/').collect();
+        if names.len() > MAX_NEW_DEPTH {
+            return Err(ApiError::bad_request(format!(
+                "Make at most {MAX_NEW_DEPTH} new folders inside each other at once."
+            )));
+        }
+        for name in names {
+            dir.push(clean_folder_name(name)?);
+        }
     }
     Ok(dir)
 }
@@ -502,6 +514,33 @@ mod tests {
             )
             .await;
         assert_eq!(bad_name.status, StatusCode::BAD_REQUEST);
+
+        // New folders inside new folders, but every part must be a plain name.
+        let nested = app
+            .send(
+                "POST",
+                &format!("/api/media/{moved}/copy"),
+                Some(json!({"folder_id": b, "new_folder": "Trips/2026/Rome"})),
+                Some(&admin),
+            )
+            .await;
+        assert_eq!(nested.status, StatusCode::OK, "{:?}", nested.body);
+        assert!(app.media_root().join("b/Trips/2026/Rome/x.jpg").is_file());
+        assert_eq!(
+            nested.body["folder_id"].as_i64(),
+            Some(app.folder_id("b/Trips/2026/Rome"))
+        );
+        for bad in ["Trips/../..", "Trips//Rome", "Trips/.hidden", "/Trips"] {
+            let response = app
+                .send(
+                    "POST",
+                    &format!("/api/media/{moved}/copy"),
+                    Some(json!({"folder_id": b, "new_folder": bad})),
+                    Some(&admin),
+                )
+                .await;
+            assert_eq!(response.status, StatusCode::BAD_REQUEST, "{bad}");
+        }
     }
 
     #[tokio::test]

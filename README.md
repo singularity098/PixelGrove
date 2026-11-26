@@ -127,8 +127,10 @@ user and stored only in PixelGrove's database.
 ## Copying and moving
 
 **Copy to…** and **Move to…** (editors and admins; in the viewer, or for a selection)
-pick another folder of the library from the folder tree, optionally creating a new folder
-inside it. The file keeps its modification time; a name that's taken gets " (2)". A moved
+pick another folder of the library from the folder tree. **New folder** in the picker adds
+a folder to put them in (open it and add another for folders inside folders); new folders
+are only made on disk when you press Copy/Move here, so cancelling leaves nothing behind.
+The file keeps its modification time; a name that's taken gets " (2)". A moved
 item keeps its favorites, hidden mark and share links. Moving needs the item's folder
 mounted read-write and copying needs a read-write destination: otherwise the options are
 greyed out (and read-only folders are marked in the folder picker).

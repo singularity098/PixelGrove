@@ -16,7 +16,9 @@
 
   /**
    * Copies or moves photos and videos into another folder of the library, picked from
-   * the folder tree (optionally into a new folder made inside it).
+   * the folder tree. "New folder" adds folders that don't exist yet (inside each other,
+   * if wanted); they're made on disk only when the copy or move runs, so cancelling
+   * leaves nothing behind.
    */
   let {
     mode,
@@ -37,13 +39,19 @@
   /** The folders opened so far, top first; the last is where it goes. */
   let trail: TreeFolder[] = $state([]);
   let folders: TreeFolder[] = $state([]);
-  let newFolder = $state('');
+  /** New folders opened inside `here`, outermost first; made when the move runs. */
+  let pending: string[] = $state([]);
+  /** The name being typed for a new folder, or null when not naming one. */
+  let naming: string | null = $state(null);
+  let nameInput: HTMLInputElement | undefined = $state();
   let error = $state('');
   let busy = $state(false);
   const here = $derived(trail.at(-1) ?? null);
   const what = $derived(items.length === 1 ? `“${items[0].name}”` : `${items.length.toLocaleString()} items`);
   const verb = $derived(mode === 'copy' ? 'Copy' : 'Move');
-  const sameFolder = $derived(mode === 'move' && here?.id === folderId && !newFolder.trim());
+  const sameFolder = $derived(mode === 'move' && here?.id === folderId && pending.length === 0);
+  /** Where it goes, as shown: the open folder's name plus any new ones. */
+  const target = $derived(here ? [here.name, ...pending].join('/') : '');
 
   $effect(() => {
     dialog?.showModal();
@@ -60,6 +68,36 @@
     );
   });
 
+  function open(folders: TreeFolder[]) {
+    trail = folders;
+    pending = [];
+    naming = null;
+  }
+
+  function startNaming() {
+    naming = '';
+    error = '';
+    queueMicrotask(() => nameInput?.focus());
+  }
+
+  /** Opens the new folder being named (or the existing one, if the name is taken). */
+  function addFolder() {
+    const name = (naming ?? '').trim();
+    if (!name) {
+      naming = null;
+      return;
+    }
+    if (name.startsWith('.') || /[/\\]/.test(name)) {
+      error = "Folder names can't start with a dot or contain slashes.";
+      return;
+    }
+    const existing = pending.length === 0 ? folders.find((f) => f.name === name) : undefined;
+    naming = null;
+    error = '';
+    if (existing) open([...trail, existing]);
+    else pending = [...pending, name];
+  }
+
   function close() {
     dialog?.close();
     onclose();
@@ -74,7 +112,7 @@
       const result = await post<{ placed?: unknown[]; failed: { id: number; error: string }[] }>(`/media/${mode}`, {
         ids,
         folder_id: here.id,
-        new_folder: newFolder.trim() || undefined,
+        new_folder: pending.length ? pending.join('/') : undefined,
       });
       const failedIds = new Set(result.failed.map((f) => f.id));
       if (failedIds.size === ids.length) {
@@ -82,8 +120,7 @@
         error = result.failed[0]?.error ?? 'Something went wrong.';
         return;
       }
-      const folder = newFolder.trim() ? `${here.name}/${newFolder.trim()}` : here.name;
-      ondone({ mode, done: ids.filter((id) => !failedIds.has(id)), failed: result.failed, folder });
+      ondone({ mode, done: ids.filter((id) => !failedIds.has(id)), failed: result.failed, folder: target });
       close();
     } catch (e) {
       error = (e as Error).message;
@@ -96,35 +133,85 @@
 <dialog bind:this={dialog} onclose={onclose} onkeydown={(e) => e.stopPropagation()}>
   <h3>{verb} {what} to…</h3>
   <nav class="trail" aria-label="Folder">
-    <button type="button" class="crumb" onclick={() => (trail = [])} disabled={!here}>Library</button>
+    <button type="button" class="crumb" onclick={() => open([])} disabled={!here}>Library</button>
     {#each trail as folder, i (folder.id)}
       <span class="muted">/</span>
-      <button type="button" class="crumb" onclick={() => (trail = trail.slice(0, i + 1))} disabled={i === trail.length - 1}>
+      <button
+        type="button"
+        class="crumb"
+        onclick={() => open(trail.slice(0, i + 1))}
+        disabled={i === trail.length - 1 && pending.length === 0}
+      >
         {folder.name}
+      </button>
+    {/each}
+    {#each pending as name, i (i)}
+      <span class="muted">/</span>
+      <button
+        type="button"
+        class="crumb new"
+        onclick={() => (pending = pending.slice(0, i + 1))}
+        disabled={i === pending.length - 1}
+        title="New folder"
+      >
+        {name}
       </button>
     {/each}
   </nav>
   <ul class="folders">
-    {#each folders as folder (folder.id)}
+    {#if pending.length === 0}
+      {#each folders as folder (folder.id)}
+        <li>
+          <button type="button" onclick={() => open([...trail, folder])} class:current={folder.id === folderId} class:read-only={!folder.writable}>
+            <Icon name="folder" size={18} />
+            <span class="name">{folder.name}</span>
+            {#if folder.subfolder_count > 0}<Icon name="right" size={16} />{/if}
+          </button>
+        </li>
+      {:else}
+        {#if !here?.writable}<li class="muted small empty">No folders inside.</li>{/if}
+      {/each}
+    {/if}
+    {#if here?.writable}
       <li>
-        <button type="button" onclick={() => (trail = [...trail, folder])} class:current={folder.id === folderId} class:read-only={!folder.writable}>
-          <Icon name="folder" size={18} />
-          <span class="name">{folder.name}</span>
-          {#if folder.subfolder_count > 0}<Icon name="right" size={16} />{/if}
-        </button>
+        {#if naming !== null}
+          <form
+            class="naming"
+            onsubmit={(e) => {
+              e.preventDefault();
+              addFolder();
+            }}
+          >
+            <Icon name="folder" size={18} />
+            <input
+              bind:this={nameInput}
+              bind:value={naming}
+              placeholder="Folder name"
+              aria-label="New folder name"
+              maxlength="255"
+              onkeydown={(e) => {
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  naming = null;
+                }
+              }}
+            />
+            <button type="submit" class="ghost">Create</button>
+          </form>
+        {:else}
+          <button type="button" class="add" onclick={startNaming}>
+            <Icon name="folderPlus" size={18} />
+            <span class="name">New folder</span>
+          </button>
+        {/if}
       </li>
-    {:else}
-      <li class="muted small empty">No folders inside.</li>
-    {/each}
+    {/if}
   </ul>
   {#if here && !here.writable}
     <p class="muted small">“{here.name}” is read-only, so nothing can be put in it. Open another folder.</p>
-  {:else if here}
-    <label>
-      New folder inside “{here.name}” (optional)
-      <input bind:value={newFolder} placeholder="Leave empty to use “{here.name}”" maxlength="255" />
-    </label>
-  {:else}
+  {:else if pending.length}
+    <p class="muted small">“{pending.at(-1)}” will be made when you {mode === 'copy' ? 'copy' : 'move'} {items.length === 1 ? 'it' : 'them'}.</p>
+  {:else if !here}
     <p class="muted small">Open the folder to {mode} {items.length === 1 ? 'it' : 'them'} into.</p>
   {/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
@@ -172,6 +259,10 @@
     cursor: pointer;
   }
 
+  .crumb.new {
+    font-style: italic;
+  }
+
   .crumb:disabled {
     color: var(--text);
     font-weight: 600;
@@ -214,6 +305,27 @@
   .folders button.read-only .name::after {
     content: ' (read-only)';
     color: var(--text-muted);
+  }
+
+  .folders button.add {
+    color: var(--accent);
+  }
+
+  .naming {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 12px;
+  }
+
+  .naming input {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .folders .naming button {
+    width: auto;
+    padding: 6px 10px;
   }
 
   .name {
