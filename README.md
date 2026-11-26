@@ -79,7 +79,9 @@ page has **Rescan** for just that folder and those below it, for anyone who can 
 on phones, pull down at the top of Photos or a folder page to do the same.
 
 PixelGrove watches folders for changes and also rescans everything every 6 hours, since
-change notifications don't work on network shares (NFS/SMB). Hidden folders and
+change notifications don't work on network shares (NFS/SMB). A full rescan goes through
+the media folders from the one with the fewest files to the one with the most, so a
+small folder that gets new photos (a phone's DCIM) is done before big archives. Hidden folders and
 `@eaDir`, `#recycle`, `#snapshot` and `lost+found` are skipped; symlinks are not followed.
 To leave a folder out, put an empty `.nomedia` or `.ignore` file in it: that folder and
 everything below it disappear from PixelGrove (the files are untouched), and come back

@@ -116,13 +116,14 @@ impl Indexer {
         tokio::spawn(async move { this.handle_changes(rx).await });
     }
 
-    /// Scans every root.
+    /// Scans every root, smallest first.
     pub async fn full_scan(&self) {
         let _guard = self.inner.scan_lock.lock().await;
         self.inner.status.lock().unwrap().scanning = true;
         let inner = self.inner.clone();
-        let roots = self.roots();
+        let mut roots = self.roots();
         let result = tokio::task::spawn_blocking(move || {
+            smallest_first(&inner.db, &mut roots);
             let mut total = ScanStats::default();
             for (id, root) in &roots {
                 match scanner::scan(&inner.db, *id, root, root, &inner.excludes) {
@@ -396,6 +397,23 @@ pub fn load_extra_roots(db: &Db) -> Result<Vec<PathBuf>> {
     Ok(list.into_iter().map(PathBuf::from).collect())
 }
 
+/// Orders roots by how many files they held at the last scan, fewest first. New photos
+/// usually land in a small folder (a phone's DCIM) next to big archives, so they show
+/// up without waiting for the archives to be walked. Unscanned roots count as empty.
+fn smallest_first(db: &Db, roots: &mut [(i64, PathBuf)]) {
+    let counts = db.conn().and_then(|conn| {
+        let mut stmt =
+            conn.prepare("SELECT root_id, sum(media_count) FROM folders GROUP BY root_id")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))?;
+        Ok(rows.collect::<rusqlite::Result<std::collections::HashMap<_, _>>>()?)
+    });
+    match counts {
+        // Stable, so roots of equal size keep their configured order.
+        Ok(counts) => roots.sort_by_key(|(id, _)| counts.get(id).copied().unwrap_or(0)),
+        Err(err) => tracing::warn!("couldn't count files per root: {err:#}"),
+    }
+}
+
 /// Configured roots first, then added ones not already among them.
 fn all_roots(configured: &[PathBuf], extra: &[PathBuf]) -> Vec<PathBuf> {
     let mut all = configured.to_vec();
@@ -504,6 +522,33 @@ mod tests {
             wait_for(|| media_count(&db) == 1).await,
             "watcher should remove the deleted folder"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn full_scan_visits_smallest_root_first() {
+        let config_dir = tempfile::tempdir().unwrap();
+        let big = tempfile::tempdir().unwrap();
+        let small = tempfile::tempdir().unwrap();
+        for name in ["a.jpg", "b.jpg", "c.jpg"] {
+            std::fs::write(big.path().join(name), testdata::jpeg_with_exif()).unwrap();
+        }
+        std::fs::write(small.path().join("d.jpg"), testdata::jpeg_with_exif()).unwrap();
+
+        let mut config = Config::with_config_dir(config_dir.path().to_path_buf());
+        config.media_roots = vec![big.path().to_path_buf(), small.path().to_path_buf()];
+        let db = Db::open(&config_dir.path().join("t.db")).unwrap();
+        let indexer = Indexer::new(db.clone(), &config).unwrap();
+
+        // Before any scan there are no counts: the configured order stands.
+        let mut roots = indexer.roots();
+        smallest_first(&db, &mut roots);
+        assert_eq!(roots[0].1, big.path());
+
+        indexer.full_scan().await;
+        let mut roots = indexer.roots();
+        smallest_first(&db, &mut roots);
+        let order: Vec<&Path> = roots.iter().map(|(_, p)| p.as_path()).collect();
+        assert_eq!(order, [small.path(), big.path()]);
     }
 
     #[test]
