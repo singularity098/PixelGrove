@@ -66,6 +66,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -122,12 +123,19 @@ private val RETRY_DELAYS = longArrayOf(500, 1_000, 2_000, 4_000, 0)
 @Composable
 private fun AnimatedThumb(item: MediaItem, modifier: Modifier) {
     val animation = rememberAnimation(item, maxEdge = 360, cover = true)
-    Box(modifier) {
+    // Compose doesn't clip an AndroidView to its bounds, and a centre-cropped ImageView
+    // draws the whole scaled frame: a wide GIF spilled over its neighbours.
+    Box(modifier.clipToBounds()) {
         // The still preview underneath until the animation is decoded (and for stills).
         ThumbImage(item.id, item.kind, item.v, Modifier.fillMaxSize(), trash = item.trash)
         if (animation != null) {
             AndroidView(
-                factory = { ImageView(it).apply { scaleType = ImageView.ScaleType.CENTER_CROP } },
+                factory = {
+                    ImageView(it).apply {
+                        scaleType = ImageView.ScaleType.CENTER_CROP
+                        cropToPadding = true
+                    }
+                },
                 update = { it.setImageDrawable(animation) },
                 modifier = Modifier.fillMaxSize(),
             )
