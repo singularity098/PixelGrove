@@ -150,14 +150,12 @@ fun SelectionBar(
         navigationIcon = { IconButton(onClick = { selection.clear() }) { Icon(Icons.Outlined.Close, "Cancel selection") } },
         actions = {
             IconButton(onClick = { selection.selectAll(list.items.map { it.id }) }) { Icon(Icons.Outlined.SelectAll, "Select all") }
-            IconButton(onClick = { picking = false }, enabled = count > 0 && !busy && LibraryWritable.on) {
-                Icon(Icons.Outlined.CreateNewFolder, "Copy to folder")
-            }
+            // Move and delete-for-good are the everyday actions; copy and trash sit in the menu.
             IconButton(onClick = { picking = true }, enabled = count > 0 && !busy && writable) {
                 Icon(Icons.AutoMirrored.Outlined.DriveFileMove, "Move to folder")
             }
-            IconButton(onClick = { confirm = false }, enabled = count > 0 && !busy && writable) {
-                Icon(Icons.Outlined.Delete, "Move to trash")
+            IconButton(onClick = { confirm = true }, enabled = count > 0 && !busy && writable) {
+                Icon(Icons.Outlined.DeleteForever, "Delete permanently")
             }
             Box {
                 IconButton(onClick = { menu = true }) { Icon(Icons.Outlined.MoreVert, "More") }
@@ -169,16 +167,10 @@ fun SelectionBar(
                         onClick = { menu = false; picking = false },
                     )
                     DropdownMenuItem(
-                        text = { Text("Move to folder…") },
-                        leadingIcon = { Icon(Icons.AutoMirrored.Outlined.DriveFileMove, null) },
+                        text = { Text("Move to trash") },
+                        leadingIcon = { Icon(Icons.Outlined.Delete, null) },
                         enabled = count > 0 && !busy && writable,
-                        onClick = { menu = false; picking = true },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Delete permanently") },
-                        leadingIcon = { Icon(Icons.Outlined.DeleteForever, null) },
-                        enabled = count > 0 && !busy && writable,
-                        onClick = { menu = false; confirm = true },
+                        onClick = { menu = false; confirm = false },
                     )
                 }
             }
